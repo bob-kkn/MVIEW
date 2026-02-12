@@ -25,7 +25,6 @@ class AppPerformanceTests(unittest.TestCase):
         self.assertEqual(len(payload), 1)
         self.assertEqual(payload[0]["track_seg_point_id"], "a")
 
-
     def test_pano_points_defaults_to_limited_payload(self):
         points = [
             {"lat": 37.1, "lon": 127.1, "track_seg_point_id": "a"},

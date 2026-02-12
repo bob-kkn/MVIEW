@@ -3996,18 +3996,7 @@ $(function() {
   const initId = getInitialTargetNodeId();
   if (initId) {
     window._hasPendingTargetNode = true;
-
-    // 초기 points 미주입 케이스에서 타겟 노드 딥링크가 오면,
-    // 한 번만 full points를 받아 기존 이동 로직(showImage/gotoNodeByInfo)을 유지한다.
-    fetch('/pano/points?full=1')
-      .then(res => res.json())
-      .then(data => {
-        points = Array.isArray(data) ? data : [];
-        gotoNodeByInfo({ track_seg_point_id: initId });
-      })
-      .catch(err => {
-        console.error('[init target] points preload 실패:', err);
-      });
+    gotoNodeByInfo({ track_seg_point_id: initId });
   } else {
     console.log('초기 데이터 없음. 메뉴에서 데이터셋을 로드하세요.');
   }
