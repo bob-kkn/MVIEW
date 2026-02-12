@@ -227,7 +227,6 @@ def _get_active_points_by_lat_snapshot() -> Tuple[List[Tuple[float, float, dict]
         return safe_rows, safe_lats
 
 
-<<<<<<< codex/identify-bottleneck-in-/points-and-/datasets-k9xomg
 def _query_active_points_in_bbox(bbox: str, limit: int = 5000) -> List[dict]:
     if not bbox:
         return []
@@ -255,8 +254,6 @@ def _query_active_points_in_bbox(bbox: str, limit: int = 5000) -> List[dict]:
     return out
 
 
-=======
->>>>>>> main
 # ─────────────────────────────────────────────────────────────
 # Util
 # ─────────────────────────────────────────────────────────────
@@ -1096,9 +1093,6 @@ def index():
 def api_points():
     bbox = request.args.get("bbox", "").strip()
     limit = int(request.args.get("limit", "5000"))
-<<<<<<< codex/identify-bottleneck-in-/points-and-/datasets-k9xomg
-    return jsonify(_query_active_points_in_bbox(bbox, limit))
-=======
 
     if not bbox:
         return jsonify([])
@@ -1123,7 +1117,6 @@ def api_points():
                 break
 
     return jsonify(out)
->>>>>>> main
 
 
 @app.route("/pano/admin")
