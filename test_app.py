@@ -25,6 +25,50 @@ class AppPerformanceTests(unittest.TestCase):
         self.assertEqual(len(payload), 1)
         self.assertEqual(payload[0]["track_seg_point_id"], "a")
 
+<<<<<<< codex/identify-bottleneck-in-/points-and-/datasets-k9xomg
+
+    def test_pano_points_defaults_to_limited_payload(self):
+        points = [
+            {"lat": 37.1, "lon": 127.1, "track_seg_point_id": "a"},
+            {"lat": 37.2, "lon": 127.2, "track_seg_point_id": "b"},
+            {"lat": 37.3, "lon": 127.3, "track_seg_point_id": "c"},
+        ]
+        m._set_active(points, ["D1"], use_tiles=True)
+
+        res = self.client.get("/pano/points?limit=2")
+        self.assertEqual(res.status_code, 200)
+        payload = res.get_json()
+        self.assertEqual(len(payload), 2)
+        self.assertEqual(payload[0]["track_seg_point_id"], "a")
+
+    def test_pano_points_supports_bbox_query(self):
+        points = [
+            {"lat": 37.1, "lon": 127.1, "track_seg_point_id": "a"},
+            {"lat": 38.1, "lon": 128.1, "track_seg_point_id": "b"},
+        ]
+        m._set_active(points, ["D1"], use_tiles=True)
+
+        res = self.client.get("/pano/points?bbox=127.0,37.0,127.2,37.2&limit=10")
+        self.assertEqual(res.status_code, 200)
+        payload = res.get_json()
+        self.assertEqual(len(payload), 1)
+        self.assertEqual(payload[0]["track_seg_point_id"], "a")
+
+    def test_pano_points_full_flag_returns_all_points(self):
+        points = [
+            {"lat": 37.1, "lon": 127.1, "track_seg_point_id": "a"},
+            {"lat": 37.2, "lon": 127.2, "track_seg_point_id": "b"},
+            {"lat": 37.3, "lon": 127.3, "track_seg_point_id": "c"},
+        ]
+        m._set_active(points, ["D1"], use_tiles=True)
+
+        res = self.client.get("/pano/points?full=1")
+        self.assertEqual(res.status_code, 200)
+        payload = res.get_json()
+        self.assertEqual(len(payload), 3)
+
+=======
+>>>>>>> main
     def test_get_shapefile_datasets_uses_cache_when_signature_same(self):
         point_file = "/tmp/waypoint/D1.shp"
 

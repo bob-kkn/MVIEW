@@ -227,6 +227,36 @@ def _get_active_points_by_lat_snapshot() -> Tuple[List[Tuple[float, float, dict]
         return safe_rows, safe_lats
 
 
+<<<<<<< codex/identify-bottleneck-in-/points-and-/datasets-k9xomg
+def _query_active_points_in_bbox(bbox: str, limit: int = 5000) -> List[dict]:
+    if not bbox:
+        return []
+
+    try:
+        west, south, east, north = map(float, str(bbox).split(","))
+    except Exception:
+        return []
+
+    points_by_lat, point_lats = _get_active_points_by_lat_snapshot()
+    if not points_by_lat or not point_lats:
+        return []
+
+    safe_limit = max(1, int(limit))
+    start_idx = bisect_left(point_lats, south)
+    end_idx = bisect_right(point_lats, north)
+
+    out = []
+    for _lat, lon, point in points_by_lat[start_idx:end_idx]:
+        if west <= lon <= east:
+            out.append(point)
+            if len(out) >= safe_limit:
+                break
+
+    return out
+
+
+=======
+>>>>>>> main
 # ─────────────────────────────────────────────────────────────
 # Util
 # ─────────────────────────────────────────────────────────────
@@ -1066,6 +1096,9 @@ def index():
 def api_points():
     bbox = request.args.get("bbox", "").strip()
     limit = int(request.args.get("limit", "5000"))
+<<<<<<< codex/identify-bottleneck-in-/points-and-/datasets-k9xomg
+    return jsonify(_query_active_points_in_bbox(bbox, limit))
+=======
 
     if not bbox:
         return jsonify([])
@@ -1090,6 +1123,7 @@ def api_points():
                 break
 
     return jsonify(out)
+>>>>>>> main
 
 
 @app.route("/pano/admin")
@@ -1126,8 +1160,18 @@ def pano_admin(track_seg_point_id=None):
 
 @app.route("/pano/points")
 def points():
-    # 전역 ACTIVE points 그대로 반환
-    return make_response(jsonify(_get_active_points_snapshot()))
+    bbox = request.args.get("bbox", "").strip()
+    limit = int(request.args.get("limit", "2000"))
+    include_all = request.args.get("full", "0") in {"1", "true", "True"}
+
+    if include_all:
+        return make_response(jsonify(_get_active_points_snapshot()))
+
+    if bbox:
+        return make_response(jsonify(_query_active_points_in_bbox(bbox, limit)))
+
+    points_snapshot = _get_active_points_snapshot()
+    return make_response(jsonify(points_snapshot[:max(1, limit)]))
 
 
 @app.route("/api/datasets")
