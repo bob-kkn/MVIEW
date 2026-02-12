@@ -469,6 +469,16 @@ async function fetchByMapViewport() {
     const res = await fetch(url, { signal: mapFetchAbort.signal });
     const data = await res.json();
 
+    // 초기 points 미주입 상태에서는 현재 viewport 데이터로 1회 부트스트랩
+    if ((!Array.isArray(points) || points.length === 0) && Array.isArray(data) && data.length > 0) {
+      points = data;
+      triggerTrackLineLoadFromPoints();
+      const firstImageIndex = points.findIndex(p => p && p.image && String(p.image).trim() !== '');
+      if (firstImageIndex >= 0) {
+        showImage(firstImageIndex);
+      }
+    }
+
     // 렌더링
     renderFetchedPoints(data);
 
@@ -498,18 +508,12 @@ function renderFetchedPoints(data) {
     let lat = p.lat, lon = p.lon;
 
     if ((lat == null || lon == null) && Array.isArray(p.coordinates) && p.coordinates.length >= 2) {
-      // ✅ 서버 로직과 동일: coordinates = [lat, lon]
-      //lat = p.coordinates[0];
-      //lon = p.coordinates[1];
-      if ((lat == null || lon == null) && Array.isArray(p.coordinates) && p.coordinates.length >= 2) {
-        const a = p.coordinates[0], b = p.coordinates[1];
-        // 둘 다 범위 맞으면 추정
-        const aIsLat = a >= -90 && a <= 90;
-        const bIsLat = b >= -90 && b <= 90;
-        if (aIsLat && !bIsLat) { lat = a; lon = b; }
-        else if (!aIsLat && bIsLat) { lat = b; lon = a; }
-        else { lat = a; lon = b; } // fallback
-      }
+      const a = p.coordinates[0], b = p.coordinates[1];
+      const aIsLat = a >= -90 && a <= 90;
+      const bIsLat = b >= -90 && b <= 90;
+      if (aIsLat && !bIsLat) { lat = a; lon = b; }
+      else if (!aIsLat && bIsLat) { lat = b; lon = a; }
+      else { lat = a; lon = b; }
     }
 
     if (lat == null || lon == null) continue;
@@ -540,13 +544,15 @@ function renderFetchedPoints(data) {
         return;
       }
 
-      // 1) 같은 페이지에서 파노/뷰어만 이동(추천: 너 코드에 이미 있을 확률 높음)
-      if (typeof window.gotoNodeByInfo === "function") {
+      // 1) 같은 페이지에서 파노/뷰어 이동 가능하면 우선 시도
+      const hasLocalNode = Array.isArray(points)
+        && points.some(x => String(x?.track_seg_point_id ?? '').trim() === nodeId);
+      if (hasLocalNode && typeof window.gotoNodeByInfo === "function") {
         window.gotoNodeByInfo({ track_seg_point_id: nodeId });
         return;
       }
 
-      // 2) fallback: /pano/<id>로 페이지 이동
+      // 2) fallback: 서버 라우트로 이동해 대상 노드를 로드
       window.location.href = `/pano/${encodeURIComponent(nodeId)}`;
     });
 
@@ -898,6 +904,16 @@ function makeDirectionFanSVG(angleDeg = 0, spanDeg = 80) {
     '</defs>' +
     '<path d="M' + cx + ',' + cy + ' L' + x1 + ',' + y1 + ' A' + r + ',' + r + ' 0 ' + laf + ' 1 ' + x2 + ',' + y2 + ' Z" fill="url(#fanGrad)" stroke="none"/>' +
     '</svg>';
+}
+
+function triggerTrackLineLoadFromPoints() {
+  if (!miniMap || !Array.isArray(points) || points.length < 2) return;
+  const datasetName = points[0]?.dataset_name;
+  if (!datasetName) return;
+
+  loadTrackLineFromShapefile(datasetName).catch(err => {
+    console.error('[triggerTrackLineLoadFromPoints] Track 라인 로드 실패:', err);
+  });
 }
 
 async function renderMarkers() {
@@ -3979,56 +3995,64 @@ $(function() {
     setTimeout(updateNorthOffsetInputStyle, 100);
   }
   {% else %}
-  // 서버에서 데이터가 없으면 /points API 호출
-  $.getJSON('/pano/points', data => {
-    points = (data || []);
-    let center = points.length ? [points[0].lat, points[0].lon] : [37.5665, 126.9780];
-    miniMap = L.map('miniMap', { center: center, zoom: 17, zoomControl: true, attributionControl: true });
-    L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', { maxZoom: 19 }).addTo(miniMap);
-    miniMap.zoomControl.setPosition('topleft');
+  // 서버에서 초기 points를 주지 않은 경우: 전체 points를 먼저 당기지 않고 viewport 기반 fetch로 시작
+  points = [];
+  const center = [37.5665, 126.9780];
+  miniMap = L.map('miniMap', { center: center, zoom: 17, zoomControl: true, attributionControl: true });
+  L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', { maxZoom: 19 }).addTo(miniMap);
+  miniMap.zoomControl.setPosition('topleft');
 
-    // ✅ Viewport 기반 포인트 fetch 핸들러 연결 (이 케이스에서 빠져있음)
-    pointsLayer = null;
-    lastFetchKey = "";
-    if (mapFetchAbort) mapFetchAbort.abort();
-    mapFetchAbort = null;
-    attachMapFetchHandlers();
-    
-    // Leaflet 확대/축소 컨트롤 크기 조정 (최초 로드 시에도 적용)
-    const leafletZoomControl = document.querySelector('.leaflet-control-zoom');
-    if (leafletZoomControl) {
-      leafletZoomControl.style.transform = 'scale(1.0)';
-    }
+  pointsLayer = null;
+  lastFetchKey = "";
+  if (mapFetchAbort) mapFetchAbort.abort();
+  mapFetchAbort = null;
+  attachMapFetchHandlers();
 
-    addReturnButtonControl();
+  const leafletZoomControl = document.querySelector('.leaflet-control-zoom');
+  if (leafletZoomControl) {
+    leafletZoomControl.style.transform = 'scale(1.0)';
+  }
 
-    // 우클릭 메뉴 제거됨
+  addReturnButtonControl();
 
-    if (points.length) {
-      renderMarkers();
-      // 첫 번째 노드를 중심으로 적절히 확대된 상태로 설정
-      const firstPoint = points[0];
-      if (firstPoint) {
-        miniMap.setView([firstPoint.lat, firstPoint.lon], 17);
-      }
-      let startIdx = 0;
-      if (window.targetNodeInfo && window.targetNodeInfo.track_seg_point_id) {
-        const id = (window.targetNodeInfo.track_seg_point_id || '').toString().trim();
-        const found = points.findIndex(p => (p.track_seg_point_id || '').toString().trim() === id);
-        if (found >= 0) startIdx = found;
-      }
-      const initId = getInitialTargetNodeId();
-      if (initId) {
-        window._hasPendingTargetNode = true;
+  const initId = getInitialTargetNodeId();
+  if (initId) {
+    window._hasPendingTargetNode = true;
+
+    // 초기 points 미주입 케이스에서 타겟 노드 딥링크가 오면,
+    // 한 번만 full points를 받아 기존 이동 로직(showImage/gotoNodeByInfo)을 유지한다.
+    fetch('/pano/points?full=1')
+      .then(res => res.json())
+      .then(data => {
+        points = Array.isArray(data) ? data : [];
+        triggerTrackLineLoadFromPoints();
         gotoNodeByInfo({ track_seg_point_id: initId });
-      } else {
-        showImage(startIdx);
-      }
-      setTimeout(updateNorthOffsetInputStyle, 100);
-    } else {
-      console.log('초기 데이터 없음. 메뉴에서 데이터셋을 로드하세요.');
-    }
-  });
+      })
+      .catch(err => {
+        console.error('[init target] points preload 실패:', err);
+      });
+  } else {
+    // 루트(/) 진입 시에는 full points를 1회 받아 기존 뷰어 초기 표시 동작을 유지한다.
+    fetch('/pano/points?full=1')
+      .then(res => res.json())
+      .then(data => {
+        points = Array.isArray(data) ? data : [];
+        if (!points.length) {
+          console.log('초기 데이터 없음. 메뉴에서 데이터셋을 로드하세요.');
+          return;
+        }
+
+        triggerTrackLineLoadFromPoints();
+
+        const firstImageIndex = points.findIndex(p => p && p.image && String(p.image).trim() !== '');
+        if (firstImageIndex >= 0) {
+          showImage(firstImageIndex);
+        }
+      })
+      .catch(err => {
+        console.error('[root init] points preload 실패:', err);
+      });
+  }
   {% endif %}
 });
 
