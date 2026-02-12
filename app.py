@@ -1096,6 +1096,34 @@ def api_points():
     return jsonify(_query_active_points_in_bbox(bbox, limit))
 
 
+
+
+@app.get("/api/point/<track_seg_point_id>")
+def api_point_by_id(track_seg_point_id):
+    track_seg_point_id = urllib.parse.unquote(str(track_seg_point_id)).strip()
+    if not track_seg_point_id:
+        return jsonify({"success": False, "error": "track_seg_point_id is required"}), 400
+
+    points_snapshot = _get_active_points_snapshot()
+    for i, point in enumerate(points_snapshot):
+        pid = str(point.get("track_seg_point_id", f"node_{i}")).strip()
+        if pid == track_seg_point_id:
+            return jsonify({"success": True, "point": point})
+
+    ds_name = resolve_dataset_by_node_id(track_seg_point_id)
+    if ds_name:
+        try:
+            ds_points = load_shapefile_dataset(ds_name, use_tiles=True)
+            _set_active(ds_points, [ds_name], use_tiles=True)
+            for i, point in enumerate(ds_points):
+                pid = str(point.get("track_seg_point_id", f"node_{i}")).strip()
+                if pid == track_seg_point_id:
+                    return jsonify({"success": True, "point": point})
+        except Exception as e:
+            app.logger.warning(f"[api/point] auto-load failed: {e}")
+
+    return jsonify({"success": False, "error": "point not found"}), 404
+
 @app.route("/pano/admin")
 @app.route("/pano/admin/<track_seg_point_id>")
 def pano_admin(track_seg_point_id=None):

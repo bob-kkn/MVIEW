@@ -26,6 +26,20 @@ class AppPerformanceTests(unittest.TestCase):
         self.assertEqual(payload[0]["track_seg_point_id"], "a")
 
 
+
+    def test_api_point_returns_single_point(self):
+        points = [
+            {"lat": 37.1, "lon": 127.1, "track_seg_point_id": "a", "image": "/x.jpg"},
+            {"lat": 37.2, "lon": 127.2, "track_seg_point_id": "b", "image": "/y.jpg"},
+        ]
+        m._set_active(points, ["D1"], use_tiles=True)
+
+        res = self.client.get("/api/point/a")
+        self.assertEqual(res.status_code, 200)
+        payload = res.get_json()
+        self.assertTrue(payload["success"])
+        self.assertEqual(payload["point"]["track_seg_point_id"], "a")
+
     def test_pano_points_defaults_to_limited_payload(self):
         points = [
             {"lat": 37.1, "lon": 127.1, "track_seg_point_id": "a"},

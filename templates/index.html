@@ -907,7 +907,7 @@ function makeDirectionFanSVG(angleDeg = 0, spanDeg = 80) {
 }
 
 function triggerTrackLineLoadFromPoints() {
-  if (!miniMap || !Array.isArray(points) || points.length < 2) return;
+  if (!miniMap || !Array.isArray(points) || points.length < 1) return;
   const datasetName = points[0]?.dataset_name;
   if (!datasetName) return;
 
@@ -4019,39 +4019,31 @@ $(function() {
   if (initId) {
     window._hasPendingTargetNode = true;
 
-    // 초기 points 미주입 케이스에서 타겟 노드 딥링크가 오면,
-    // 한 번만 full points를 받아 기존 이동 로직(showImage/gotoNodeByInfo)을 유지한다.
-    fetch('/pano/points?full=1')
+    // 필요한 노드 1건만 요청해서 초기 표시 (full points 다운로드 제거)
+    fetch(`/api/point/${encodeURIComponent(initId)}`)
       .then(res => res.json())
       .then(data => {
-        points = Array.isArray(data) ? data : [];
-        triggerTrackLineLoadFromPoints();
-        gotoNodeByInfo({ track_seg_point_id: initId });
-      })
-      .catch(err => {
-        console.error('[init target] points preload 실패:', err);
-      });
-  } else {
-    // 루트(/) 진입 시에는 full points를 1회 받아 기존 뷰어 초기 표시 동작을 유지한다.
-    fetch('/pano/points?full=1')
-      .then(res => res.json())
-      .then(data => {
-        points = Array.isArray(data) ? data : [];
-        if (!points.length) {
-          console.log('초기 데이터 없음. 메뉴에서 데이터셋을 로드하세요.');
+        if (!data || !data.success || !data.point) {
+          console.warn('[init target] point 로드 실패, /pano/<id>로 이동합니다.');
+          if (!location.pathname.startsWith('/pano/')) {
+            window.location.href = `/pano/${encodeURIComponent(initId)}`;
+          }
           return;
         }
 
+        points = [data.point];
         triggerTrackLineLoadFromPoints();
-
-        const firstImageIndex = points.findIndex(p => p && p.image && String(p.image).trim() !== '');
-        if (firstImageIndex >= 0) {
-          showImage(firstImageIndex);
-        }
+        showImage(0);
       })
       .catch(err => {
-        console.error('[root init] points preload 실패:', err);
+        console.error('[init target] point preload 실패:', err);
+        if (!location.pathname.startsWith('/pano/')) {
+          window.location.href = `/pano/${encodeURIComponent(initId)}`;
+        }
       });
+  } else {
+    // 루트(/) 진입 시에는 viewport 기반으로 필요한 범위만 점진적으로 로드
+    console.log('초기 데이터 없음. 메뉴에서 데이터셋을 로드하세요.');
   }
   {% endif %}
 });
