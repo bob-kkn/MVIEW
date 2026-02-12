@@ -11,6 +11,7 @@ import hashlib
 import time
 import secrets
 import threading
+from bisect import bisect_left, bisect_right
 from typing import Dict, Tuple, Optional, List
 
 from flask import (
@@ -136,6 +137,12 @@ dataset_cache_signature: Dict[str, Tuple[float, float, float, bool]] = {}
 # ✅ Image index cache: dataset -> dict
 image_index_cache: Dict[str, dict] = {}
 
+# ✅ Dataset list cache
+dataset_list_cache: Dict[str, object] = {
+    "sig": None,
+    "datasets": [],
+}
+
 # ✅ Tile root map cache: built once -> (dataset,img_name) -> base_dir
 tile_root_map: Dict[Tuple[str, str], str] = {}
 tile_root_map_sig: Optional[float] = None
@@ -146,6 +153,8 @@ tile_root_map_sig: Optional[float] = None
 ACTIVE_STATE_LOCK = threading.Lock()
 ACTIVE_STATE = {
     "points": [],                # merged points
+    "points_by_lat": [],         # (lat, lon, point) sorted by lat
+    "point_lats": [],            # sorted lat array (for bisect)
     "current_dataset": None,     # "A,B" 형태
     "use_tiles": True,
     "sig_hash": None,
@@ -164,8 +173,33 @@ def _safe_mtime(path: str) -> float:
 
 
 def _set_active(points: List[dict], dataset_names: List[str], use_tiles: bool):
+    points = points or []
+    points_by_lat = []
+    point_lats = []
+
+    for p in points:
+        lat = p.get("lat")
+        lon = p.get("lon")
+        if lat is None or lon is None:
+            coords = p.get("coordinates")
+            if isinstance(coords, (list, tuple)) and len(coords) >= 2:
+                lat, lon = coords[0], coords[1]
+
+        if lat is None or lon is None:
+            continue
+
+        try:
+            points_by_lat.append((float(lat), float(lon), p))
+        except Exception:
+            continue
+
+    points_by_lat.sort(key=lambda row: row[0])
+    point_lats = [row[0] for row in points_by_lat]
+
     with ACTIVE_STATE_LOCK:
-        ACTIVE_STATE["points"] = points or []
+        ACTIVE_STATE["points"] = points
+        ACTIVE_STATE["points_by_lat"] = points_by_lat
+        ACTIVE_STATE["point_lats"] = point_lats
         ACTIVE_STATE["current_dataset"] = ",".join([str(x) for x in dataset_names]) if dataset_names else None
         ACTIVE_STATE["use_tiles"] = bool(use_tiles)
         ACTIVE_STATE["sig_hash"] = _datasets_sig_hash(dataset_names, use_tiles) if dataset_names else None
@@ -182,6 +216,42 @@ def _get_active_points_snapshot() -> List[dict]:
 def _get_active_dataset_name() -> Optional[str]:
     with ACTIVE_STATE_LOCK:
         return ACTIVE_STATE.get("current_dataset")
+
+
+def _get_active_points_by_lat_snapshot() -> Tuple[List[Tuple[float, float, dict]], List[float]]:
+    with ACTIVE_STATE_LOCK:
+        rows = ACTIVE_STATE.get("points_by_lat")
+        lats = ACTIVE_STATE.get("point_lats")
+        safe_rows = rows if isinstance(rows, list) else []
+        safe_lats = lats if isinstance(lats, list) else []
+        return safe_rows, safe_lats
+
+
+def _query_active_points_in_bbox(bbox: str, limit: int = 5000) -> List[dict]:
+    if not bbox:
+        return []
+
+    try:
+        west, south, east, north = map(float, str(bbox).split(","))
+    except Exception:
+        return []
+
+    points_by_lat, point_lats = _get_active_points_by_lat_snapshot()
+    if not points_by_lat or not point_lats:
+        return []
+
+    safe_limit = max(1, int(limit))
+    start_idx = bisect_left(point_lats, south)
+    end_idx = bisect_right(point_lats, north)
+
+    out = []
+    for _lat, lon, point in points_by_lat[start_idx:end_idx]:
+        if west <= lon <= east:
+            out.append(point)
+            if len(out) >= safe_limit:
+                break
+
+    return out
 
 
 # ─────────────────────────────────────────────────────────────
@@ -775,6 +845,29 @@ def get_shapefile_datasets():
         point_abs = get_absolute_path(POINT_FOLDER)
         point_files = glob.glob(os.path.join(point_abs, "*.shp"))
 
+        sig_meta = []
+        for point_file in point_files:
+            base_name = os.path.splitext(os.path.basename(point_file))[0]
+            track_file = os.path.join(get_absolute_path(TRACK_FOLDER), f"{base_name}.shp")
+            img_folder = get_image_folder_path(base_name)
+            if not (os.path.exists(img_folder) and os.path.isdir(img_folder)):
+                img_folder = get_absolute_path(UPLOAD_IMG_FOLDER)
+
+            sig_meta.append((
+                base_name,
+                _safe_mtime(point_file),
+                _safe_mtime(track_file),
+                _safe_mtime(img_folder),
+            ))
+
+        sig_meta.sort(key=lambda row: row[0])
+        sig = hashlib.sha1(
+            json.dumps(sig_meta, ensure_ascii=False, separators=(",", ":")).encode("utf-8")
+        ).hexdigest()[:12]
+
+        if dataset_list_cache.get("sig") == sig:
+            return dataset_list_cache.get("datasets", [])
+
         for point_file in point_files:
             base_name = os.path.splitext(os.path.basename(point_file))[0]
 
@@ -801,6 +894,8 @@ def get_shapefile_datasets():
             if info["is_complete"]:
                 datasets.append(info)
 
+        dataset_list_cache["sig"] = sig
+        dataset_list_cache["datasets"] = datasets
         return datasets
     except Exception as e:
         app.logger.error(f"dataset scan failed: {e}")
@@ -998,37 +1093,36 @@ def index():
 def api_points():
     bbox = request.args.get("bbox", "").strip()
     limit = int(request.args.get("limit", "5000"))
+    return jsonify(_query_active_points_in_bbox(bbox, limit))
 
-    if not bbox:
-        return jsonify([])
 
-    try:
-        west, south, east, north = map(float, bbox.split(","))
-    except Exception:
-        return jsonify([])
 
-    points = _get_active_points_snapshot()
-    if not points:
-        return jsonify([])
 
-    out = []
-    for p in points:
-        lat = p.get("lat")
-        lon = p.get("lon")
-        if lat is None or lon is None:
-            coords = p.get("coordinates")
-            if isinstance(coords, (list, tuple)) and len(coords) >= 2:
-                lat, lon = coords[0], coords[1]
-        if lat is None or lon is None:
-            continue
+@app.get("/api/point/<track_seg_point_id>")
+def api_point_by_id(track_seg_point_id):
+    track_seg_point_id = urllib.parse.unquote(str(track_seg_point_id)).strip()
+    if not track_seg_point_id:
+        return jsonify({"success": False, "error": "track_seg_point_id is required"}), 400
 
-        if west <= float(lon) <= east and south <= float(lat) <= north:
-            out.append(p)
-            if len(out) >= limit:
-                break
+    points_snapshot = _get_active_points_snapshot()
+    for i, point in enumerate(points_snapshot):
+        pid = str(point.get("track_seg_point_id", f"node_{i}")).strip()
+        if pid == track_seg_point_id:
+            return jsonify({"success": True, "point": point})
 
-    return jsonify(out)
+    ds_name = resolve_dataset_by_node_id(track_seg_point_id)
+    if ds_name:
+        try:
+            ds_points = load_shapefile_dataset(ds_name, use_tiles=True)
+            _set_active(ds_points, [ds_name], use_tiles=True)
+            for i, point in enumerate(ds_points):
+                pid = str(point.get("track_seg_point_id", f"node_{i}")).strip()
+                if pid == track_seg_point_id:
+                    return jsonify({"success": True, "point": point})
+        except Exception as e:
+            app.logger.warning(f"[api/point] auto-load failed: {e}")
 
+    return jsonify({"success": False, "error": "point not found"}), 404
 
 @app.route("/pano/admin")
 @app.route("/pano/admin/<track_seg_point_id>")
@@ -1064,8 +1158,18 @@ def pano_admin(track_seg_point_id=None):
 
 @app.route("/pano/points")
 def points():
-    # 전역 ACTIVE points 그대로 반환
-    return make_response(jsonify(_get_active_points_snapshot()))
+    bbox = request.args.get("bbox", "").strip()
+    limit = int(request.args.get("limit", "2000"))
+    include_all = request.args.get("full", "0") in {"1", "true", "True"}
+
+    if include_all:
+        return make_response(jsonify(_get_active_points_snapshot()))
+
+    if bbox:
+        return make_response(jsonify(_query_active_points_in_bbox(bbox, limit)))
+
+    points_snapshot = _get_active_points_snapshot()
+    return make_response(jsonify(points_snapshot[:max(1, limit)]))
 
 
 @app.route("/api/datasets")
@@ -1124,11 +1228,13 @@ def api_load_datasets():
 
 @app.route("/api/clear-cache", methods=["POST"])
 def api_clear_cache():
-    global dataset_cache, dataset_cache_signature, image_index_cache, tile_root_map, tile_root_map_sig
+    global dataset_cache, dataset_cache_signature, image_index_cache, tile_root_map, tile_root_map_sig, dataset_list_cache
 
     dataset_cache.clear()
     dataset_cache_signature.clear()
     image_index_cache.clear()
+    dataset_list_cache["sig"] = None
+    dataset_list_cache["datasets"] = []
     tile_root_map = {}
     tile_root_map_sig = None
 
