@@ -498,18 +498,12 @@ function renderFetchedPoints(data) {
     let lat = p.lat, lon = p.lon;
 
     if ((lat == null || lon == null) && Array.isArray(p.coordinates) && p.coordinates.length >= 2) {
-      // ✅ 서버 로직과 동일: coordinates = [lat, lon]
-      //lat = p.coordinates[0];
-      //lon = p.coordinates[1];
-      if ((lat == null || lon == null) && Array.isArray(p.coordinates) && p.coordinates.length >= 2) {
-        const a = p.coordinates[0], b = p.coordinates[1];
-        // 둘 다 범위 맞으면 추정
-        const aIsLat = a >= -90 && a <= 90;
-        const bIsLat = b >= -90 && b <= 90;
-        if (aIsLat && !bIsLat) { lat = a; lon = b; }
-        else if (!aIsLat && bIsLat) { lat = b; lon = a; }
-        else { lat = a; lon = b; } // fallback
-      }
+      const a = p.coordinates[0], b = p.coordinates[1];
+      const aIsLat = a >= -90 && a <= 90;
+      const bIsLat = b >= -90 && b <= 90;
+      if (aIsLat && !bIsLat) { lat = a; lon = b; }
+      else if (!aIsLat && bIsLat) { lat = b; lon = a; }
+      else { lat = a; lon = b; }
     }
 
     if (lat == null || lon == null) continue;
@@ -3979,56 +3973,33 @@ $(function() {
     setTimeout(updateNorthOffsetInputStyle, 100);
   }
   {% else %}
-  // 서버에서 데이터가 없으면 /points API 호출
-  $.getJSON('/pano/points', data => {
-    points = (data || []);
-    let center = points.length ? [points[0].lat, points[0].lon] : [37.5665, 126.9780];
-    miniMap = L.map('miniMap', { center: center, zoom: 17, zoomControl: true, attributionControl: true });
-    L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', { maxZoom: 19 }).addTo(miniMap);
-    miniMap.zoomControl.setPosition('topleft');
+  // 서버에서 초기 points를 주지 않은 경우: 전체 points를 먼저 당기지 않고 viewport 기반 fetch로 시작
+  points = [];
+  const center = [37.5665, 126.9780];
+  miniMap = L.map('miniMap', { center: center, zoom: 17, zoomControl: true, attributionControl: true });
+  L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', { maxZoom: 19 }).addTo(miniMap);
+  miniMap.zoomControl.setPosition('topleft');
 
-    // ✅ Viewport 기반 포인트 fetch 핸들러 연결 (이 케이스에서 빠져있음)
-    pointsLayer = null;
-    lastFetchKey = "";
-    if (mapFetchAbort) mapFetchAbort.abort();
-    mapFetchAbort = null;
-    attachMapFetchHandlers();
-    
-    // Leaflet 확대/축소 컨트롤 크기 조정 (최초 로드 시에도 적용)
-    const leafletZoomControl = document.querySelector('.leaflet-control-zoom');
-    if (leafletZoomControl) {
-      leafletZoomControl.style.transform = 'scale(1.0)';
-    }
+  pointsLayer = null;
+  lastFetchKey = "";
+  if (mapFetchAbort) mapFetchAbort.abort();
+  mapFetchAbort = null;
+  attachMapFetchHandlers();
 
-    addReturnButtonControl();
+  const leafletZoomControl = document.querySelector('.leaflet-control-zoom');
+  if (leafletZoomControl) {
+    leafletZoomControl.style.transform = 'scale(1.0)';
+  }
 
-    // 우클릭 메뉴 제거됨
+  addReturnButtonControl();
 
-    if (points.length) {
-      renderMarkers();
-      // 첫 번째 노드를 중심으로 적절히 확대된 상태로 설정
-      const firstPoint = points[0];
-      if (firstPoint) {
-        miniMap.setView([firstPoint.lat, firstPoint.lon], 17);
-      }
-      let startIdx = 0;
-      if (window.targetNodeInfo && window.targetNodeInfo.track_seg_point_id) {
-        const id = (window.targetNodeInfo.track_seg_point_id || '').toString().trim();
-        const found = points.findIndex(p => (p.track_seg_point_id || '').toString().trim() === id);
-        if (found >= 0) startIdx = found;
-      }
-      const initId = getInitialTargetNodeId();
-      if (initId) {
-        window._hasPendingTargetNode = true;
-        gotoNodeByInfo({ track_seg_point_id: initId });
-      } else {
-        showImage(startIdx);
-      }
-      setTimeout(updateNorthOffsetInputStyle, 100);
-    } else {
-      console.log('초기 데이터 없음. 메뉴에서 데이터셋을 로드하세요.');
-    }
-  });
+  const initId = getInitialTargetNodeId();
+  if (initId) {
+    window._hasPendingTargetNode = true;
+    gotoNodeByInfo({ track_seg_point_id: initId });
+  } else {
+    console.log('초기 데이터 없음. 메뉴에서 데이터셋을 로드하세요.');
+  }
   {% endif %}
 });
 
