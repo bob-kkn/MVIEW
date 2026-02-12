@@ -4020,7 +4020,24 @@ $(function() {
         console.error('[init target] points preload 실패:', err);
       });
   } else {
-    console.log('초기 데이터 없음. 메뉴에서 데이터셋을 로드하세요.');
+    // 루트(/) 진입 시에는 full points를 1회 받아 기존 뷰어 초기 표시 동작을 유지한다.
+    fetch('/pano/points?full=1')
+      .then(res => res.json())
+      .then(data => {
+        points = Array.isArray(data) ? data : [];
+        if (!points.length) {
+          console.log('초기 데이터 없음. 메뉴에서 데이터셋을 로드하세요.');
+          return;
+        }
+
+        const firstImageIndex = points.findIndex(p => p && p.image && String(p.image).trim() !== '');
+        if (firstImageIndex >= 0) {
+          showImage(firstImageIndex);
+        }
+      })
+      .catch(err => {
+        console.error('[root init] points preload 실패:', err);
+      });
   }
   {% endif %}
 });
