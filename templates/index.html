@@ -498,18 +498,12 @@ function renderFetchedPoints(data) {
     let lat = p.lat, lon = p.lon;
 
     if ((lat == null || lon == null) && Array.isArray(p.coordinates) && p.coordinates.length >= 2) {
-      // ✅ 서버 로직과 동일: coordinates = [lat, lon]
-      //lat = p.coordinates[0];
-      //lon = p.coordinates[1];
-      if ((lat == null || lon == null) && Array.isArray(p.coordinates) && p.coordinates.length >= 2) {
-        const a = p.coordinates[0], b = p.coordinates[1];
-        // 둘 다 범위 맞으면 추정
-        const aIsLat = a >= -90 && a <= 90;
-        const bIsLat = b >= -90 && b <= 90;
-        if (aIsLat && !bIsLat) { lat = a; lon = b; }
-        else if (!aIsLat && bIsLat) { lat = b; lon = a; }
-        else { lat = a; lon = b; } // fallback
-      }
+      const a = p.coordinates[0], b = p.coordinates[1];
+      const aIsLat = a >= -90 && a <= 90;
+      const bIsLat = b >= -90 && b <= 90;
+      if (aIsLat && !bIsLat) { lat = a; lon = b; }
+      else if (!aIsLat && bIsLat) { lat = b; lon = a; }
+      else { lat = a; lon = b; }
     }
 
     if (lat == null || lon == null) continue;
