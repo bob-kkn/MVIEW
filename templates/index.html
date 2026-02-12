@@ -1,0 +1,4732 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>360° 파노라마 맵뷰어</title>
+  <script src="https://code.jquery.com/jquery-3.6.0.min.js"></script>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/marzipano/0.10.2/marzipano.min.js"></script>
+  <!-- Leaflet JS & CSS -->
+  <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
+  <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+
+  <!-- ✅ 카카오맵: autoload=false + defer (동기 차단 제거) -->
+  <!-- 카카오맵 API 주석 처리 - Leaflet만 사용 -->
+  <!-- <script id="kakao-sdk" src="https://dapi.kakao.com/v2/maps/sdk.js?appkey=f7459c835e6e38faba20a35d17188448&autoload=false" defer></script> -->
+
+  <style>
+    body, html { margin:0; padding:0; height:100%; background:#000; user-select:none; -webkit-user-select:none; -moz-user-select:none; -ms-user-select:none; }
+    #menuBar { position:fixed; top:0; left:0; right:0; height:38px;
+      background:#232323; color:#fff; z-index:3000; display:flex; align-items:center;
+      font-size:1em; font-weight:700; font-family:'Nanum Gothic',sans-serif;
+    }
+    /* 메뉴바가 숨겨질 때 뷰어 컨테이너 위치 조정 */
+    body.hide-menu #viewerContainer { top: 0 !important; }
+    #menuBar > .menu-item {
+      margin:0 15px; cursor:pointer; padding:7px 8px; border-radius:4px;
+      color:#fff; user-select:none; transition: background 0.12s;
+    }
+    #menuBar > .menu-item:hover { background:#484848; }
+    .dropdown-menu {
+      display:none; position:absolute; top:38px; left:15px; background:#fff;
+      min-width:150px; box-shadow:0 2px 12px #0003; border-radius:0 0 8px 8px;
+      z-index:3001; font-size:1em; color:#222; padding:5px 0;
+    }
+    .dropdown-menu.active { display:block; }
+    .dropdown-menu .dropdown-item {
+      padding:9px 16px; cursor:pointer; white-space:nowrap;
+      transition: background 0.13s; user-select:none;
+    }
+    .dropdown-menu .dropdown-item:hover { background:#ffeb9c; }
+    .dropdown-menu label {
+      display:flex; align-items:center; gap:7px; font-weight:600; color:#3d3d3d;
+    }
+    .dropdown-menu input[type="number"] {
+      width:65px; font-size:1em; border:1px solid #bbb; border-radius:4px; padding:2px 6px;
+      margin-left:7px; user-select:text; -webkit-user-select:text; -moz-user-select:text; -ms-user-select:text;
+    }
+    input, textarea, select {
+      user-select:text !important; -webkit-user-select:text !important; -moz-user-select:text !important; -ms-user-select:text !important;
+    }
+    #miniMap { position:fixed; bottom:10px; left:10px; width:300px; height:300px;
+      border:2px solid #000; border-radius:6px; z-index:6000; background:#fff; }
+    #viewerContainer { 
+      width:100vw; height:100vh; background:#000; position:relative;
+      image-rendering: -webkit-optimize-contrast;
+      image-rendering: -moz-crisp-edges;
+      image-rendering: crisp-edges;
+      image-rendering: pixelated;
+    }
+    .nav-arrow { user-select: none; transition: background 0.1s; pointer-events: auto; }
+    .nav-arrow img { pointer-events: none; user-select: none; width: 36px; height: 36px; display: block; }
+    
+    /* CSS 화살표 대안 (이미지 로딩 문제 해결) */
+    .nav-arrow-css {
+      position: relative;
+      width: 36px;
+      height: 36px;
+    }
+    .nav-arrow-css::before {
+      content: '';
+      position: absolute;
+      top: 50%;
+      left: 50%;
+      width: 0;
+      height: 0;
+      border-left: 12px solid transparent;
+      border-right: 12px solid transparent;
+      border-bottom: 20px solid #fff;
+      transform: translate(-50%, -50%);
+    }
+    .topbar-spacer { flex:1; }
+    .custom-marker { width: 16px; height: 16px; pointer-events: auto; }
+
+    /* 지도 선택 컨텍스트 메뉴 제거됨 */
+    
+    /* 날짜 표시 영역 */
+    #locationInfo {
+      position: absolute;
+      top: 20px;
+      left: 20px;
+      background: rgba(0, 0, 0, 0.7);
+      color: white;
+      padding: 12px 16px;
+      border-radius: 8px;
+      font-family: 'Nanum Gothic', sans-serif;
+      font-size: 14px;
+      z-index: 2000;
+      backdrop-filter: blur(5px);
+      border: 1px solid rgba(255, 255, 255, 0.2);
+      width: fit-content;
+      display: inline-block;
+    }
+    
+    /* 메뉴바가 있을 때 날짜 박스 위치 조정 */
+    body:not(.hide-menu) #locationInfo {
+      top: 60px; /* 메뉴바 높이(38px) + 여백(22px) */
+    }
+    
+    /* 확대/축소 버튼 기본 위치 (메뉴바가 없을 때) */
+    #zoomControls {
+      top: 60px; /* 기본 위치 */
+    }
+    
+    /* 메뉴바가 있을 때 확대/축소 버튼 위치 조정 */
+    body:not(.hide-menu) #zoomControls {
+      top: 60px; /* 메뉴바 높이(38px) + 여백(22px) */
+    }
+    
+    #locationInfo .date-text {
+      font-size: 14px;
+      opacity: 0.9;
+      text-align: left;
+      white-space: nowrap;
+    }
+    
+    /* 체크 아이콘 완전히 숨기기 */
+    #locationInfo .date-text svg,
+    #locationInfo .date-icon,
+    #locationInfo .date-dropdown,
+    #locationInfo .date-text svg[viewBox="0 0 24 24"],
+    #locationInfo .date-text svg path[d*="M12 2C6.48"] {
+      display: none !important;
+      visibility: hidden !important;
+      opacity: 0 !important;
+      width: 0 !important;
+      height: 0 !important;
+    }
+  </style>
+</head>
+<body{% if hide_menu %} class="hide-menu"{% endif %}>
+  <script id="targetNodeInfo" type="application/json">{% if target_point %}{{ {
+    'track_seg_point_id': track_seg_point_id,
+    'target_index': target_index,
+    'target_point': target_point
+  } | tojson }}{% else %}null{% endif %}</script>
+  {% if not hide_menu %}
+  <div id="menuBar">
+    <div class="menu-item" id="menuFileBtn">파일</div>
+    <div class="menu-item" id="menuOptionBtn">옵션</div>
+    <div class="topbar-spacer"></div>
+  </div>
+  {% endif %}
+
+  {% if not hide_menu %}
+  <!-- 파일 메뉴 -->
+  <div class="dropdown-menu" id="menuFileMenu">
+    <div class="dropdown-item" id="loadDatasetBtn">데이터셋 로드</div>
+    <div class="dropdown-item" id="setDataPathBtn">데이터 경로 지정</div>
+  </div>
+
+  <!-- 옵션 메뉴 -->
+  <div class="dropdown-menu" id="menuOptionMenu">
+    <div class="dropdown-item">
+      <label>
+        North Offset (°)
+        <input id="northOffsetInput" type="number" min="0" max="360" step="0.1" value="0">
+        <button id="saveNorthOffsetBtn" style="margin-left:8px; padding:4px 8px; background:#4caf50; color:#fff; border:none; border-radius:4px; cursor:pointer; font-size:0.9em;">저장</button>
+      </label>
+      <span style="display:block;font-size:0.91em;color:#666;margin-left:3px;">파노라마 이미지 각도 보정</span>
+    </div>
+    <div class="dropdown-item" id="editPerImageOffsetsBtn">개별 이미지 오프셋 편집</div>
+    <div class="dropdown-item" id="clearOffsetsBtn" style="color: #000000;">모든 오프셋 초기화</div>
+    <div class="dropdown-item" id="showNodeUrlsBtn" style="color: #000000;">노드 URL 목록 보기</div>
+  </div>
+  {% endif %}
+
+
+  <!-- 노드 URL 목록 모달 -->
+  <div id="nodeUrlsModal" style="display:none; position:fixed; top:0; left:0; right:0; bottom:0; background:rgba(0,0,0,0.7); z-index:5000; align-items:center; justify-content:center;">
+    <div style="background:#fff; border-radius:8px; padding:20px; max-width:800px; max-height:80vh; overflow-y:auto; box-shadow:0 4px 20px rgba(0,0,0,0.3);">
+      <h3 style="margin:0 0 15px 0; color:#333; font-family:'Nanum Gothic',sans-serif;">각 노드의 개별 URL</h3>
+      <div id="nodeUrlsContent" style="max-height:60vh; overflow-y:auto;">
+        <!-- 노드 URL 목록이 여기에 표시됩니다 -->
+      </div>
+      <div style="margin-top:15px; text-align:right;">
+        <button id="closeNodeUrlsModal" style="padding:8px 16px; background:#666; color:#fff; border:none; border-radius:4px; cursor:pointer; font-size:0.9em;">닫기</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- 폴더 설정 모달 -->
+  <div id="folderSettingsModal" style="display:none; position:fixed; top:0; left:0; right:0; bottom:0; background:rgba(0,0,0,0.7); z-index:5000; align-items:center; justify-content:center;">
+    <div style="background:#fff; border-radius:8px; padding:20px; max-width:600px; max-height:80vh; overflow-y:auto; box-shadow:0 4px 20px rgba(0,0,0,0.3);">
+      <h3 style="margin:0 0 15px 0; color:#333;">데이터 경로 지정</h3>
+      <div style="margin-bottom:15px; font-size:0.9em; color:#666;">데이터 파일들이 위치한 폴더 경로를 설정하세요. 설정 후 데이터셋 로드가 가능합니다.</div>
+      
+      <div style="margin-bottom:15px;">
+        <label style="display:block; margin-bottom:5px; font-weight:600; color:#333;">📁 이미지 폴더</label>
+        <div style="display:flex; gap:8px;">
+          <input id="imgFolderInput" type="text" style="flex:1; padding:8px; border:1px solid #ccc; border-radius:4px; font-size:0.9em;" placeholder="예: C:/Users/사용자/Documents/panoview/static/img">
+          <button id="browseImgFolderBtn" style="padding:8px 12px; background:#2196f3; color:#fff; border:none; border-radius:4px; cursor:pointer; font-size:0.9em; white-space:nowrap;">📁 탐색</button>
+        </div>
+        <div style="font-size:0.8em; color:#666; margin-top:2px;">파노라마 이미지들이 저장된 폴더</div>
+      </div>
+      
+      <div style="margin-bottom:15px;">
+        <label style="display:block; margin-bottom:5px; font-weight:600; color:#333;">🗺️ Track Shapefile 폴더</label>
+        <div style="display:flex; gap:8px;">
+          <input id="trackFolderInput" type="text" style="flex:1; padding:8px; border:1px solid #ccc; border-radius:4px; font-size:0.9em;" placeholder="예: C:/Users/사용자/Documents/panoview/static/track">
+          <button id="browseTrackFolderBtn" style="padding:8px 12px; background:#2196f3; color:#fff; border:none; border-radius:4px; cursor:pointer; font-size:0.9em; white-space:nowrap;">📁 탐색</button>
+        </div>
+        <div style="font-size:0.8em; color:#666; margin-top:2px;">Track 라인 형태의 Shapefile (.shp) 파일들이 저장된 폴더</div>
+      </div>
+      
+      <div style="margin-bottom:15px;">
+        <label style="display:block; margin-bottom:5px; font-weight:600; color:#333;">📍 Waypoint Shapefile 폴더</label>
+        <div style="display:flex; gap:8px;">
+          <input id="pointFolderInput" type="text" style="flex:1; padding:8px; border:1px solid #ccc; border-radius:4px; font-size:0.9em;" placeholder="예: C:/Users/사용자/Documents/panoview/static/point">
+          <button id="browsePointFolderBtn" style="padding:8px 12px; background:#2196f3; color:#fff; border:none; border-radius:4px; cursor:pointer; font-size:0.9em; white-space:nowrap;">📁 탐색</button>
+        </div>
+        <div style="font-size:0.8em; color:#666; margin-top:2px;">Waypoint 포인트 형태의 Shapefile (.shp) 파일들이 저장된 폴더</div>
+      </div>
+      
+      <div style="margin-bottom:20px;">
+        <label style="display:block; margin-bottom:5px; font-weight:600; color:#333;">📊 Match CSV 폴더</label>
+        <div style="display:flex; gap:8px;">
+          <input id="matchFolderInput" type="text" style="flex:1; padding:8px; border:1px solid #ccc; border-radius:4px; font-size:0.9em;" placeholder="예: C:/Users/사용자/Documents/panoview/static/match">
+          <button id="browseMatchFolderBtn" style="padding:8px 12px; background:#2196f3; color:#fff; border:none; border-radius:4px; cursor:pointer; font-size:0.9em; white-space:nowrap;">📁 탐색</button>
+        </div>
+        <div style="font-size:0.8em; color:#666; margin-top:2px;">매칭 정보가 담긴 CSV 파일들이 저장된 폴더</div>
+      </div>
+
+      <div style="margin-bottom:20px;">
+        <label style="display:block; margin-bottom:5px; font-weight:600; color:#333;">🧩 Tile 이미지 폴더</label>
+        <div style="display:flex; gap:8px;">
+          <input id="tileFolderInput" type="text" style="flex:1; padding:8px; border:1px solid #ccc; border-radius:4px; font-size:0.9em;" placeholder="예: C:/Users/사용자/Documents/panoview/static/tileimg">
+          <button id="browseTileFolderBtn" style="padding:8px 12px; background:#2196f3; color:#fff; border:none; border-radius:4px; cursor:pointer; font-size:0.9em; white-space:nowrap;">📁 탐색</button>
+        </div>
+        <div style="font-size:0.8em; color:#666; margin-top:2px;">생성된 타일 이미지가 저장될 폴더</div>
+      </div>
+      
+      <div style="display:flex; justify-content:flex-end; gap:10px;">
+        <button id="saveFolderSettingsBtn" style="padding:8px 16px; background:#4caf50; color:#fff; border:none; border-radius:4px; cursor:pointer;">저장</button>
+        <button id="cancelFolderSettingsBtn" style="padding:8px 16px; background:#f44336; color:#fff; border:none; border-radius:4px; cursor:pointer;">취소</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- Per-Image Offset Editor Modal -->
+  <div id="offsetEditorModal" style="display:none; position:fixed; top:0; left:0; right:0; bottom:0; background:rgba(0,0,0,0.7); z-index:5000; align-items:center; justify-content:center;">
+    <div style="background:#fff; border-radius:8px; padding:20px; max-width:600px; max-height:80vh; overflow-y:auto; box-shadow:0 4px 20px rgba(0,0,0,0.3);">
+      <h3 style="margin:0 0 15px 0; color:#333;">개별 이미지 오프셋 편집</h3>
+      <div style="margin-bottom:15px; font-size:0.9em; color:#666;">
+        각 이미지별로 추가 보정값을 설정할 수 있습니다. 전역 North Offset과 함께 적용됩니다.
+      </div>
+      <div style="display:flex; align-items:center; gap:12px; margin:10px 0 14px 0;">
+        <label style="display:flex; align-items:center; gap:6px; cursor:pointer; color:#444;">
+          <input id="selectAllOffsets" type="checkbox">
+          모두 선택
+        </label>
+        <div style="flex:1"></div>
+        <label style="display:flex; align-items:center; gap:6px; color:#444;">
+          일괄 오프셋(°)
+          <input id="bulkOffsetInput" type="number" min="0" max="360" step="0.1" style="width:100px; padding:4px; border:1px solid #ccc; border-radius:4px;">
+        </label>
+        <button id="applyBulkOffsetBtn" style="padding:6px 12px; background:#455a64; color:#fff; border:none; border-radius:4px; cursor:pointer;">선택에 적용</button>
+      </div>
+      <div id="offsetEditorContent" style="max-height:400px; overflow-y:auto; border:1px solid #ddd; border-radius:4px; padding:10px;"></div>
+      <div style="display:flex; justify-content:flex-end; gap:10px; margin-top:20px; align-items:center;">
+        <button id="showImageNumbersBtn" style="margin-right:auto; padding:8px 12px; background:#607d8b; color:#fff; border:none; border-radius:4px; cursor:pointer;">
+          미니맵에서 이미지 번호 확인
+        </button>
+        <button id="saveOffsetsBtn" style="padding:8px 16px; background:#4caf50; color:#fff; border:none; border-radius:4px; cursor:pointer;">저장</button>
+        <button id="cancelOffsetsBtn" style="padding:8px 16px; background:#f44336; color:#fff; border:none; border-radius:4px; cursor:pointer;">취소</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- Dataset Selection Modal (다중 선택) -->
+  <div id="datasetSelectionModal" style="display:none; position:fixed; top:0; left:0; right:0; bottom:0; background:rgba(0,0,0,0.7); z-index:5000; align-items:center; justify-content:center;">
+    <div style="background:#fff; border-radius:8px; padding:20px; max-width:500px; max-height:80vh; overflow-y:auto; box-shadow:0 4px 20px rgba(0,0,0,0.3);">
+      <h3 style="margin:0 0 15px 0; color:#333;">데이터셋 선택</h3>
+      <div style="margin-bottom:15px; font-size:0.9em; color:#666;">여러 개를 선택할 수 있습니다.</div>
+      <div id="datasetList" style="max-height:300px; overflow-y:auto; border:1px solid #ddd; border-radius:4px; padding:10px;"></div>
+      <div style="display:flex; justify-content:flex-end; gap:10px; margin-top:20px;">
+        <button id="loadSelectedDatasetBtn" style="padding:8px 16px; background:#4caf50; color:#fff; border:none; border-radius:4px; cursor:pointer;">로드</button>
+        <button id="cancelDatasetBtn" style="padding:8px 16px; background:#f44336; color:#fff; border:none; border-radius:4px; cursor:pointer;">취소</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- 경로 타입 선택 모달 -->
+  <div id="pathTypeSelectionModal" style="display:none; position:fixed; top:0; left:0; right:0; bottom:0; background:rgba(0,0,0,0.7); z-index:5000; align-items:center; justify-content:center;">
+    <div style="background:#fff; border-radius:8px; padding:20px; max-width:800px; max-height:80vh; overflow-y:auto; box-shadow:0 4px 20px rgba(0,0,0,0.3);">
+      <h3 style="margin:0 0 15px 0; color:#333;">데이터 경로 지정</h3>
+      <div style="margin-bottom:15px; font-size:0.9em; color:#666;">설정할 경로 타입을 선택하세요.</div>
+      
+      <div style="display:flex; flex-direction:column; gap:10px;">
+        <button id="selectGpxPathBtn" style="padding:12px 16px; background:#f8f9fa; border:2px solid #e9ecef; border-radius:6px; cursor:pointer; text-align:left; font-size:1em; transition:all 0.2s;" onmouseover="this.style.background='#e3f2fd'; this.style.borderColor='#2196f3';" onmouseout="this.style.background='#f8f9fa'; this.style.borderColor='#e9ecef';">
+          <div style="font-weight:600; color:#333;">🗺️ GPX 경로</div>
+          <div style="font-size:0.8em; color:#666; margin-top:2px;">GPX 파일들이 저장된 폴더</div>
+        </button>
+        
+        <button id="selectImgPathBtn" style="padding:12px 16px; background:#f8f9fa; border:2px solid #e9ecef; border-radius:6px; cursor:pointer; text-align:left; font-size:1em; transition:all 0.2s;" onmouseover="this.style.background='#e8f5e8'; this.style.borderColor='#4caf50';" onmouseout="this.style.background='#f8f9fa'; this.style.borderColor='#e9ecef';">
+          <div style="font-weight:600; color:#333;">📁 IMG 경로</div>
+          <div style="font-size:0.8em; color:#666; margin-top:2px;">파노라마 이미지들이 저장된 폴더</div>
+        </button>
+        
+        <button id="selectCsvPathBtn" style="padding:12px 16px; background:#f8f9fa; border:2px solid #e9ecef; border-radius:6px; cursor:pointer; text-align:left; font-size:1em; transition:all 0.2s;" onmouseover="this.style.background='#fff3e0'; this.style.borderColor='#ff9800';" onmouseout="this.style.background='#f8f9fa'; this.style.borderColor='#e9ecef';">
+          <div style="font-weight:600; color:#333;">📊 CSV 경로</div>
+          <div style="font-size:0.8em; color:#666; margin-top:2px;">매칭 테이블 CSV 파일들이 저장된 폴더</div>
+        </button>
+      </div>
+      
+      <div style="display:flex; justify-content:flex-end; gap:10px; margin-top:20px;">
+        <button id="cancelPathTypeBtn" style="padding:8px 16px; background:#f44336; color:#fff; border:none; border-radius:4px; cursor:pointer;">취소</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- 개별 폴더 경로 설정 모달 -->
+  <div id="individualPathModal" style="display:none; position:fixed; top:0; left:0; right:0; bottom:0; background:rgba(0,0,0,0.7); z-index:5000; align-items:center; justify-content:center;">
+    <div style="background:#fff; border-radius:8px; padding:20px; max-width:500px; max-height:80vh; overflow-y:auto; box-shadow:0 4px 20px rgba(0,0,0,0.3);">
+      <h3 id="individualPathTitle" style="margin:0 0 15px 0; color:#333;">폴더 경로 지정</h3>
+      <div id="individualPathDescription" style="margin-bottom:15px; font-size:0.9em; color:#666;">폴더 경로를 설정하세요.</div>
+      
+      <div style="margin-bottom:15px;">
+        <label style="display:block; margin-bottom:5px; font-weight:600; color:#333;">현재 경로</label>
+        <div id="currentPathDisplay" style="padding:8px; background:#f5f5f5; border:1px solid #ddd; border-radius:4px; font-family:monospace; font-size:0.9em; word-break:break-all;"></div>
+      </div>
+      
+      <div style="margin-bottom:15px;">
+        <label style="display:block; margin-bottom:5px; font-weight:600; color:#333;">새 경로</label>
+        <div style="display:flex; gap:8px;">
+          <input id="individualPathInput" type="text" style="flex:1; padding:8px; border:1px solid #ccc; border-radius:4px; font-size:0.9em;" placeholder="예: static/gpx">
+          <button id="browsePathBtn" style="padding:8px 12px; background:#2196f3; color:#fff; border:none; border-radius:4px; cursor:pointer; font-size:0.9em; white-space:nowrap;">📁 탐색</button>
+        </div>
+        <div id="individualPathHelp" style="font-size:0.8em; color:#666; margin-top:2px;">폴더 경로를 직접 입력하거나 탐색 버튼을 클릭하세요</div>
+      </div>
+      
+      <div style="display:flex; justify-content:flex-end; gap:10px;">
+        <button id="saveIndividualPathBtn" style="padding:8px 16px; background:#4caf50; color:#fff; border:none; border-radius:4px; cursor:pointer;">저장</button>
+        <button id="cancelIndividualPathBtn" style="padding:8px 16px; background:#f44336; color:#fff; border:none; border-radius:4px; cursor:pointer;">취소</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- 경로 입력 도우미 모달 -->
+  <div id="pathHelperModal" style="display:none; position:fixed; top:0; left:0; right:0; bottom:0; background:rgba(0,0,0,0.7); z-index:6000; align-items:center; justify-content:center;">
+    <div style="background:#fff; border-radius:8px; padding:20px; max-width:700px; max-height:80vh; overflow-y:auto; box-shadow:0 4px 20px rgba(0,0,0,0.3);">
+      <h3 id="pathHelperTitle" style="margin:0 0 15px 0; color:#333;">📁 폴더 경로 입력 도우미</h3>
+      <div style="margin-bottom:15px; font-size:0.9em; color:#666;">폴더 경로를 쉽게 입력할 수 있도록 도와드립니다.</div>
+      
+      <div style="margin-bottom:15px;">
+        <label style="display:block; margin-bottom:5px; font-weight:600; color:#333;">현재 경로</label>
+        <div id="pathHelperCurrentPath" style="padding:8px; background:#f5f5f5; border:1px solid #ddd; border-radius:4px; font-family:monospace; font-size:0.9em; word-break:break-all;"></div>
+      </div>
+      
+      <div style="margin-bottom:15px;">
+        <label style="display:block; margin-bottom:8px; font-weight:600; color:#333;">경로 입력 방법</label>
+        <div id="pathExamples" style="background:#f8f9fa; border:1px solid #e9ecef; border-radius:6px; padding:12px; font-size:0.9em;"></div>
+      </div>
+      
+      <div style="margin-bottom:15px;">
+        <label style="display:block; margin-bottom:5px; font-weight:600; color:#333;">상대 경로 입력 (권장)</label>
+        <div style="display:flex; gap:8px;">
+          <input id="pathHelperInput" type="text" style="flex:1; padding:8px; border:1px solid #ccc; border-radius:4px; font-size:0.9em;" placeholder="예: static/gpx, data/images">
+          <button id="openFileDialogBtn" style="padding:8px 12px; background:#17a2b8; color:#fff; border:none; border-radius:4px; cursor:pointer; font-size:0.9em; white-space:nowrap;">📂 폴더 선택</button>
+        </div>
+        <div style="font-size:0.8em; color:#666; margin-top:2px;">프로젝트 폴더 기준 상대 경로</div>
+      </div>
+      
+      <div style="margin-bottom:15px;">
+        <label style="display:block; margin-bottom:5px; font-weight:600; color:#333;">절대 경로 입력</label>
+        <div style="display:flex; gap:8px;">
+          <input id="absolutePathInput" type="text" style="flex:1; padding:8px; border:1px solid #ccc; border-radius:4px; font-size:0.9em;" placeholder="예: C:/Users/사용자/Documents/data/gpx">
+          <button id="copyFromRelativeBtn" style="padding:8px 12px; background:#6c757d; color:#fff; border:none; border-radius:4px; cursor:pointer; font-size:0.9em; white-space:nowrap;">복사</button>
+        </div>
+        <div style="font-size:0.8em; color:#666; margin-top:2px;">시스템 전체 경로 (Windows: C:\\, Mac/Linux: /)</div>
+      </div>
+      
+      <div style="margin-bottom:15px; padding:10px; background:#fff3cd; border:1px solid #ffeaa7; border-radius:4px;">
+        <strong>💡 사용 팁:</strong><br>
+        • <strong>상대 경로</strong>: 프로젝트 폴더 기준으로 입력 (static/gpx)<br>
+        • <strong>절대 경로</strong>: 시스템 전체 경로 입력 (C:/Users/사용자/Documents/data)<br>
+        • 폴더 선택 후 복사 버튼으로 상대 경로를 절대 경로로 변환 가능
+      </div>
+      
+      <div style="display:flex; justify-content:flex-end; gap:10px;">
+        <button id="applyPathHelperBtn" style="padding:8px 16px; background:#4caf50; color:#fff; border:none; border-radius:4px; cursor:pointer;">적용</button>
+        <button id="cancelPathHelperBtn" style="padding:8px 16px; background:#f44336; color:#fff; border:none; border-radius:4px; cursor:pointer;">취소</button>
+      </div>
+    </div>
+  </div>
+
+  <div id="miniMap"></div>
+
+  <!-- 지도 선택 컨텍스트 메뉴 제거됨 -->
+
+  <!-- Zoom controls for Marzipano viewer -->
+  <div id="zoomControls" style="position: absolute; right: 20px; z-index: 1000;">
+    <button id="zoomInBtn" style="background: #333; color: white; border: none; border-radius: 4px; width: 35px; height: 35px; font-size: 18px; cursor: pointer; margin-bottom: 8px; box-shadow: 0 1px 3px rgba(0,0,0,0.3); display: block;">+</button>
+    <button id="zoomOutBtn" style="background: #333; color: white; border: none; border-radius: 4px; width: 35px; height: 35px; font-size: 18px; cursor: pointer; box-shadow: 0 1px 3px rgba(0,0,0,0.3); display: block;">-</button>
+  </div>
+
+  <div id="viewerContainer">
+    <!-- 날짜 표시 -->
+    <div id="locationInfo" style="display: none;">
+      <div class="date-text">
+        <span id="dateText">날짜 정보 로딩 중...</span>
+      </div>
+    </div>
+  </div>
+
+<script>
+// /pano/<id>로 렌더될 때 서버에서 주입됨
+window.initialTargetNodeId = {{ (initialTargetNodeId or track_seg_point_id or "") | tojson }};
+
+// ==============================
+// Viewport fetch (bbox) helpers
+// ==============================
+let mapFetchTimer = null;
+let mapFetchAbort = null;
+let lastFetchKey = "";
+let pointsLayer = null; // Leaflet LayerGroup
+
+function ensurePointsLayer() {
+  if (!pointsLayer) {
+    pointsLayer = L.layerGroup().addTo(miniMap);
+  }
+}
+
+function clearPointsLayer() {
+  if (pointsLayer) pointsLayer.clearLayers();
+}
+
+function scheduleFetchByMap(delayMs = 250) {
+  if (mapFetchTimer) clearTimeout(mapFetchTimer);
+  mapFetchTimer = setTimeout(fetchByMapViewport, delayMs);
+}
+
+async function fetchByMapViewport() {
+  if (!miniMap) return;
+
+  const b = miniMap.getBounds();
+  const z = miniMap.getZoom();
+
+  // ✅ 서버가 기대하는 순서: west,south,east,north
+  const bbox = [
+    b.getWest(),
+    b.getSouth(),
+    b.getEast(),
+    b.getNorth()
+  ].join(",");
+
+  // 동일 뷰면 호출 스킵 (옵션)
+  const key = z + "|" + bbox.split(",").map(v => Number(v).toFixed(6)).join(",");
+  if (key === lastFetchKey) return;
+  lastFetchKey = key;
+
+  // 이전 요청 취소
+  if (mapFetchAbort) mapFetchAbort.abort();
+  mapFetchAbort = new AbortController();
+
+  const limit = z >= 16 ? 8000 : z >= 14 ? 5000 : 2000; // 줌에 따른 샘플링(선택)
+
+  try {
+    const url = `/api/points?bbox=${encodeURIComponent(bbox)}&limit=${limit}`;
+    const res = await fetch(url, { signal: mapFetchAbort.signal });
+    const data = await res.json();
+
+    // 렌더링
+    renderFetchedPoints(data);
+
+    // ✅ 최초 1회: initialTargetNodeId가 있으면 해당 노드로 이동/강조
+    if (!didJumpToInitialTarget) {
+      const initId = getInitialTargetNodeId(); // 너에게 준 헬퍼
+      if (initId) {
+        didJumpToInitialTarget = true;
+        // 네 기존 함수가 있으면 그걸 호출
+        // (예: gotoNodeByInfo({ track_seg_point_id: initId }))
+        gotoNodeByInfo({ track_seg_point_id: initId });
+      }
+    }
+  } catch (e) {
+    if (e.name === "AbortError") return; // 정상
+    console.error("[api_points] fetch 실패:", e);
+  }
+}
+
+function renderFetchedPoints(data) {
+  ensurePointsLayer();
+  clearPointsLayer();
+
+  if (!Array.isArray(data)) return;
+
+  for (const p of data) {
+    let lat = p.lat, lon = p.lon;
+
+    if ((lat == null || lon == null) && Array.isArray(p.coordinates) && p.coordinates.length >= 2) {
+      // ✅ 서버 로직과 동일: coordinates = [lat, lon]
+      //lat = p.coordinates[0];
+      //lon = p.coordinates[1];
+      if ((lat == null || lon == null) && Array.isArray(p.coordinates) && p.coordinates.length >= 2) {
+        const a = p.coordinates[0], b = p.coordinates[1];
+        // 둘 다 범위 맞으면 추정
+        const aIsLat = a >= -90 && a <= 90;
+        const bIsLat = b >= -90 && b <= 90;
+        if (aIsLat && !bIsLat) { lat = a; lon = b; }
+        else if (!aIsLat && bIsLat) { lat = b; lon = a; }
+        else { lat = a; lon = b; } // fallback
+      }
+    }
+
+    if (lat == null || lon == null) continue;
+
+    // 마커 (원하면 circleMarker로 가볍게)
+    const marker = L.circleMarker([lat, lon], {
+      radius: 4,
+      opacity: 0, // 테두리 완전 투명
+      fillOpacity: 0 // 채우기 완전 투명
+    });
+
+    // ✅ 클릭 시 해당 노드로 이동
+    marker.on("click", (e) => {
+      try {
+        // 지도 클릭/드래그 이벤트와 충돌 방지(선택)
+        if (e && e.originalEvent) {
+          L.DomEvent.stopPropagation(e.originalEvent);
+          L.DomEvent.preventDefault(e.originalEvent);
+        }
+      } catch (_) {}
+
+      const nodeId =
+        (p.track_seg_point_id != null ? String(p.track_seg_point_id).trim() : "") ||
+        (p.id != null ? String(p.id).trim() : "");
+
+      if (!nodeId) {
+        console.warn("[marker click] nodeId가 없음:", p);
+        return;
+      }
+
+      // 1) 같은 페이지에서 파노/뷰어만 이동(추천: 너 코드에 이미 있을 확률 높음)
+      if (typeof window.gotoNodeByInfo === "function") {
+        window.gotoNodeByInfo({ track_seg_point_id: nodeId });
+        return;
+      }
+
+      // 2) fallback: /pano/<id>로 페이지 이동
+      window.location.href = `/pano/${encodeURIComponent(nodeId)}`;
+    });
+
+    marker.addTo(pointsLayer);
+  }
+}
+
+function attachMapFetchHandlers() {
+  if (!miniMap) return;
+
+  // 이동/줌 종료 시
+  // 중복 방지
+  miniMap.off("moveend zoomend");
+  miniMap.on("moveend zoomend", () => scheduleFetchByMap(250));
+
+  // 최초 1회
+  scheduleFetchByMap(0);
+}
+
+// 콘솔 로그 비활성화 (필요할 때만)
+const DISABLE_CONSOLE = false;
+(function() {
+  if (!DISABLE_CONSOLE) return;
+
+  const originalLog = console.log.bind(console);
+  const originalWarn = console.warn.bind(console);
+  const originalInfo = console.info.bind(console);
+  const originalDebug = console.debug.bind(console);
+  const originalError = console.error.bind(console);
+
+  window.__originalConsole = {
+    log: originalLog,
+    warn: originalWarn,
+    info: originalInfo,
+    debug: originalDebug,
+    error: originalError
+  };
+
+  console.log = function() {};
+  console.warn = function() {};
+  console.info = function() {};
+  console.debug = function() {};
+  console.error = function() {};
+})();
+  
+function panoDebugLog(...args) {
+  if (window.__originalConsole && typeof window.__originalConsole.log === 'function') {
+    window.__originalConsole.log(...args);
+  } else if (console && typeof console.error === 'function') {
+    console.error(...args);
+  }
+}
+  
+window.SCRIPT_ROOT = "{{ request.script_root }}";
+
+/* =========================
+   공통 상태/유틸
+========================= */
+let keysPressed = {};
+let points = [], currentIndex = 0;
+let miniMap, markers = [], highlightOverlay = null;
+let marzipanoViewer = null;
+let marzipanoScenes = [];
+let northOffset = 0;
+let keyHoldInterval = null;
+let currentHeldKey = null;
+const NORTH_OFFSET_STORAGE_KEY = 'northOffsetDeg';
+
+let didJumpToInitialTarget = false;
+let USE_VIEWPORT_POINTS = false;
+
+// 씬 업그레이드 순차 실행을 위한 큐
+const sceneUpgradeQueues = {};
+
+function waitFrames(count = 1) {
+  return new Promise(resolve => {
+    function step(remaining) {
+      if (remaining <= 0) {
+        resolve();
+      } else {
+        requestAnimationFrame(() => step(remaining - 1));
+      }
+    }
+    step(count);
+  });
+}
+
+function delay(ms = 0) {
+  return new Promise(resolve => setTimeout(resolve, ms));
+}
+
+function enqueueSceneUpgrade(idx, task) {
+  const previous = sceneUpgradeQueues[idx] || Promise.resolve();
+  const next = previous.then(() => task());
+  const wrapped = next.catch(err => {
+    console.error(`[타일 로드] 씬 업그레이드 실패 (포인트 ${idx})`, err);
+  });
+  const done = wrapped.finally(() => {
+    if (sceneUpgradeQueues[idx] === done) {
+      sceneUpgradeQueues[idx] = null;
+    }
+  });
+  sceneUpgradeQueues[idx] = done;
+}
+
+// per-image offset 저장
+let perImageOffsets = {};
+const PER_IMAGE_OFFSETS_STORAGE_KEY = 'perImageOffsets.v2';
+
+// 지도 관련 변수
+let currentMapType = 'leaflet'; // 'leaflet' 또는 'kakao'
+// 카카오맵 API 주석 처리 - Leaflet만 사용
+// let kakaoMap = null;
+
+// 이미지 번호 표시
+let showImageNumbers = false;
+let numberLabels = [];
+
+// Leaflet Control
+let returnBtn = null;
+
+// 다중 데이터셋
+let availableDatasets = [];
+let selectedDatasetNames = new Set();
+
+// 폴더 설정 (서버에서 동적으로 로드되므로 빈 값으로 초기화)
+let currentFolderSettings = {
+  img_folder: '',
+  track_folder: '',
+  point_folder: '',
+  match_folder: '',
+  tile_folder: ''
+};
+
+// 경로 설정 상태
+let isDataPathConfigured = false;
+const DATA_PATH_CONFIGURED_KEY = 'dataPathConfigured';
+const FOLDER_SETTINGS_KEY = 'folderSettings';
+
+// 중복 실행 방지 플래그
+let isLoadingDatasets = false;
+
+// 개별 경로 설정 상태
+let currentPathType = null; // 'gpx', 'img', 'csv'
+
+const codeToDeg = {
+  'KeyW': 0,   'KeyE': 45,  'KeyD': 90,  'KeyC': 135,
+  'KeyX': 180, 'KeyS': 180, 'KeyZ': 225, 'KeyA': 270, 'KeyQ': 315
+};
+
+const blueCircleSVG = '<svg width="16" height="16"><circle cx="8" cy="8" r="6" fill="none" stroke="#1961e4" stroke-width="3"/></svg>';
+const selectedCircleSVG = '<svg width="20" height="20" viewBox="0 0 20 20"><circle cx="10" cy="10" r="7" fill="#ffeb3b" stroke="#f57f17" stroke-width="2"/></svg>';
+let selectedIndices = new Set();
+let selectionRectDiv = null;
+let selectionStartPt = null;
+let prevMiniMapSize = { width: 300, height: 300 };
+let tempSelectionIndices = new Set();
+const currentPinSVG = '<svg width="24" height="24" viewBox="0 0 24 24">' +
+  '<circle cx="12" cy="12" r="9" fill="#fff" stroke="#2066da" stroke-width="2"/>' +
+  '<circle cx="12" cy="12" r="5" fill="#338af3" stroke="#338af3" stroke-width="1"/>' +
+  '<rect x="10.3" y="12.5" width="3.4" height="6" rx="1.6" fill="#2066da"/>' +
+'</svg>';
+
+/* =========================
+   ✅ 카카오 SDK 로더 (핵심)
+========================= */
+// 카카오맵 API 주석 처리 - Leaflet만 사용
+/*
+function ensureKakaoSDK() {
+  return new Promise((resolve, reject) => {
+    if (window.kakao && kakao.maps) return resolve(); // 이미 준비됨
+    let script = document.getElementById('kakao-sdk');
+    if (!script) {
+      script = document.createElement('script');
+      script.id = 'kakao-sdk';
+      script.src = 'https://dapi.kakao.com/v2/maps/sdk.js?appkey=b4fa2d086a630eaa441b0331bd094c92&autoload=false';
+      script.defer = true;
+      document.head.appendChild(script);
+    }
+    script.addEventListener('load', () => resolve());
+    script.addEventListener('error', () => reject(new Error('카카오 SDK 로드 실패')));
+  });
+}
+*/
+
+
+function getInitialTargetNodeId() {
+  // 1) 전역 변수로 주입된 경우 (예: window.initialTargetNodeId = "123")
+  if (window.initialTargetNodeId != null) {
+    const v = String(window.initialTargetNodeId).trim();
+    if (v) return v;
+  }
+
+  // 2) URL 쿼리스트링 (?initialTargetNodeId=123)
+  try {
+    const sp = new URLSearchParams(location.search);
+    const v = (sp.get('initialTargetNodeId') || '').trim();
+    if (v) return v;
+  } catch (e) {}
+
+  // 3) 쿠키 (원하면) - initial_target_node_id
+  try {
+    const v = `; ${document.cookie}`;
+    const parts = v.split(`; initial_target_node_id=`);
+    if (parts.length === 2) return decodeURIComponent(parts.pop().split(';').shift() || '').trim();
+  } catch (e) {}
+
+  return '';
+}
+
+
+
+/* =========================
+   좌표/각도 유틸 & 마커 렌더 등
+========================= */
+function offsetKeyFor(idx) {
+  const p = points[idx] || {};
+  const ds = p.dataset_name || p.datasetName || 'unknown';
+  const fn = p.image_filename || p.imageFile || p.image || String(idx);
+  return `${ds}::${fn}`;
+}
+
+function getPerImageOffset(idx) {
+  // 1. CSV의 최종 각도를 우선적으로 사용 (angle + angle_add)
+  if (points[idx] && points[idx].final_angle !== undefined) {
+    // console.log(`getPerImageOffset(${idx}): CSV 최종각도 사용 = ${points[idx].final_angle}°`);
+    return points[idx].final_angle;
+  }
+  
+  // 2. CSV에서 로드된 angle과 angle_add를 직접 계산
+  if (points[idx]) {
+    const csvAngle = points[idx].csv_angle || 0;
+    const csvAngleAdd = points[idx].csv_angle_add || 0;
+    const calculatedFinalAngle = csvAngle + csvAngleAdd;
+    if (csvAngleAdd !== 0) {
+      // console.log(`getPerImageOffset(${idx}): CSV 직접계산 사용 = ${csvAngle}° + ${csvAngleAdd}° = ${calculatedFinalAngle}°`);
+      return calculatedFinalAngle;
+    }
+  }
+  
+  // 3. 사용자가 추가로 설정한 개별 오프셋 사용 (localStorage)
+  const key = offsetKeyFor(idx);
+  const localStorageOffset = perImageOffsets[key];
+  if (localStorageOffset !== undefined && localStorageOffset !== 0) {
+    // console.log(`getPerImageOffset(${idx}): localStorage 오프셋 사용 = ${localStorageOffset}°`);
+    return localStorageOffset;
+  }
+  
+  // 4. 기본값 0
+  // console.log(`getPerImageOffset(${idx}): 기본값 사용 = 0°`);
+  return 0;
+}
+
+async function setPerImageOffset(idx, value) {
+  const key = offsetKeyFor(idx);
+  perImageOffsets[key] = value;
+  try { localStorage.setItem(PER_IMAGE_OFFSETS_STORAGE_KEY, JSON.stringify(perImageOffsets)); } catch (e) {}
+  
+  // CSV 파일에도 저장
+  try {
+    const point = points[idx];
+    if (point && point.dataset_name) {
+      const response = await fetch('/api/save-offset', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({
+          dataset_name: point.dataset_name,
+          image_index: idx,
+          offset: value
+        })
+      });
+      
+      if (response.ok) {
+        const result = await response.json();
+        // console.log(`CSV 저장 성공: ${result.message}`);
+        // points 배열의 csv_angle_add와 final_angle 업데이트
+        if (points[idx]) {
+          const oldFinalAngle = points[idx].final_angle;
+          const oldAngleAdd = points[idx].csv_angle_add || 0;
+          
+          // 기존 angle_add 값을 새로운 값으로 변경 (누적이 아님)
+          points[idx].csv_angle_add = value;
+          points[idx].final_angle = parseFloat(points[idx].csv_angle) + points[idx].csv_angle_add;
+          
+          // console.log(`이미지 ${idx} 오프셋 변경: csv_angle=${points[idx].csv_angle}°, 기존angle_add=${oldAngleAdd}°, 새로운angle_add=${value}°, final_angle=${oldFinalAngle}° → ${points[idx].final_angle}°`);
+        }
+      } else {
+        console.error('CSV 저장 실패:', response.statusText);
+      }
+    }
+  } catch (error) {
+    console.error('CSV 저장 중 오류:', error);
+  }
+}
+
+// 우선순위: 개별 이미지 오프셋 > North Offset > 0
+function getTotalOffset(idx) {
+  const perImageOffset = getPerImageOffset(idx);
+  let finalOffset = 0;
+  
+  if (perImageOffset !== 0) {
+    finalOffset = perImageOffset; // 개별 이미지 오프셋이 우선
+    // console.log(`getTotalOffset(${idx}): 개별이미지오프셋 사용 = ${perImageOffset}° (우선순위: CSV > localStorage > 0)`);
+  } else if (northOffset !== 0) {
+    finalOffset = northOffset; // North Offset이 두 번째
+    // console.log(`getTotalOffset(${idx}): North Offset 사용 = ${northOffset}°`);
+  } else {
+    finalOffset = 0; // 둘 다 없으면 0
+    // console.log(`getTotalOffset(${idx}): 오프셋 없음 = 0°`);
+  }
+  
+  return finalOffset;
+}
+
+function updateNorthOffsetInputStyle() {
+  const input = document.getElementById('northOffsetInput');
+  if (!input) return;
+  const currentPerImageOffset = getPerImageOffset(currentIndex);
+  if (currentPerImageOffset === 0) {
+  input.style.borderColor = '#ccc';
+  input.style.backgroundColor = '#fff';
+    input.title = 'North Offset이 활성화됨 (개별 이미지 오프셋: 0°)';
+  } else {
+    input.style.borderColor = '#ff4444';
+    input.style.backgroundColor = '#fff5f5';
+    input.title = 'North Offset이 비활성화됨 (개별 이미지 오프셋: ' + currentPerImageOffset + '°)';
+  }
+}
+
+function makeDirectionFanSVG(angleDeg = 0, spanDeg = 80) {
+  const r = 27, cx = 30, cy = 30;
+  const startAngle = angleDeg - spanDeg/2;
+  const endAngle = angleDeg + spanDeg/2;
+  const rad = d => (d-90) * Math.PI/180;
+  const x1 = cx + r * Math.cos(rad(startAngle));
+  const y1 = cy + r * Math.sin(rad(startAngle));
+  const x2 = cx + r * Math.cos(rad(endAngle));
+  const y2 = cy + r * Math.sin(rad(endAngle));
+  const laf = (spanDeg > 180) ? 1 : 0;
+  return '<svg width="60" height="60" style="position:absolute;left:0;top:0;">' +
+    '<defs>' +
+      '<radialGradient id="fanGrad" cx="50%" cy="50%" r="100%">' +
+        '<stop offset="0%" stop-color="#1976d2" stop-opacity="0.7"/>' +
+        '<stop offset="75%" stop-color="#1976d2" stop-opacity="0.18"/>' +
+        '<stop offset="100%" stop-color="#1976d2" stop-opacity="0"/>' +
+      '</radialGradient>' +
+    '</defs>' +
+    '<path d="M' + cx + ',' + cy + ' L' + x1 + ',' + y1 + ' A' + r + ',' + r + ' 0 ' + laf + ' 1 ' + x2 + ',' + y2 + ' Z" fill="url(#fanGrad)" stroke="none"/>' +
+    '</svg>';
+}
+
+async function renderMarkers() {
+  // Track 선분은 USE_VIEWPORT_POINTS와 관계없이 항상 로드
+  // 기존 track polyline 제거
+  if (window.trackPolyline && miniMap) {
+    try {
+      miniMap.removeLayer(window.trackPolyline);
+    } catch (e) {
+      console.warn('[renderMarkers] 기존 track polyline 제거 실패:', e);
+    }
+    window.trackPolyline = null;
+  }
+  
+  // Track 선분 그리기 (Shapefile만 지원)
+  if (points.length > 1 && miniMap) {
+    // Shapefile 데이터셋: track.shp에서 라인 로드
+    const datasetName = points[0].dataset_name;
+    console.log('[renderMarkers] Track 로드 시도:', { 
+      pointsLength: points.length, 
+      datasetName: datasetName,
+      miniMapExists: !!miniMap 
+    });
+    if (datasetName) {
+      // 비동기로 로드하되 완료를 기다리지 않음 (논블로킹)
+      // 하지만 에러는 처리하도록 함
+      loadTrackLineFromShapefile(datasetName).catch(err => {
+        console.error('[renderMarkers] Track 라인 로드 실패:', err);
+      });
+    } else {
+      console.warn('[renderMarkers] dataset_name이 없습니다.');
+    }
+  } else {
+    console.log('[renderMarkers] Track 로드 조건 불만족:', { 
+      pointsLength: points.length, 
+      miniMapExists: !!miniMap 
+    });
+  }
+  
+  if (USE_VIEWPORT_POINTS) {
+    // ✅ 전체 포인트 마커는 그리지 않음
+    // 트랙 라인은 위에서 이미 로드됨
+    return;
+  }
+
+  // 카카오맵 API 주석 처리 - Leaflet만 사용
+  // if (currentMapType === 'kakao') { renderKakaoMarkers(); return; }
+
+  // 기존 마커와 선분 제거
+  if (markers.length) markers.forEach(m=>miniMap.removeLayer(m));
+  if (numberLabels.length) numberLabels.forEach(l=>miniMap.removeLayer(l));
+  
+  markers = [];
+  numberLabels = [];
+  
+  // 이미지와 매칭된 포인트만 필터링
+  const matchedPoints = points.filter(pt => pt.image && pt.image.trim() !== '');
+  
+  matchedPoints.forEach((pt, i) => {
+    // 원본 인덱스 찾기 (전체 points 배열에서의 인덱스)
+    const originalIndex = points.findIndex(p => p === pt);
+    
+    let isSelected = selectedIndices.has(originalIndex);
+    if (showImageNumbers && selectionStartPt && tempSelectionIndices.size) {
+      const inside = tempSelectionIndices.has(originalIndex);
+      const willBeSelected = inside ? !selectedIndices.has(originalIndex) : selectedIndices.has(originalIndex);
+      isSelected = willBeSelected;
+    }
+    
+    // 완전히 투명한 원형 마커 생성 (기존 크기 유지)
+    const markerRadius = showImageNumbers && isSelected ? 20 : 16; // 기존 크기로 복원
+    const markerColor = showImageNumbers && isSelected ? '#ffeb3b' : '#1976d2';
+    
+    const marker = L.circleMarker([pt.lat, pt.lon], {
+      radius: markerRadius,
+      fillColor: markerColor,
+      color: markerColor,
+      weight: 0, // 테두리 없음
+      opacity: 0, // 테두리 완전 투명
+      fillOpacity: 0 // 채우기 완전 투명
+    }).on('click', () => window.__gotoPoint(originalIndex));
+    
+    marker.addTo(miniMap);
+    markers.push(marker);
+
+    if (showImageNumbers) {
+      const perImageOffset = getPerImageOffset(originalIndex);
+      const hasCustomOffset = perImageOffset !== 0;
+      const numberBackground = isSelected ? '#ffeb3b' : (hasCustomOffset ? '#ccc' : '#fff');
+
+      let numberIcon = L.divIcon({
+        className: 'number-label',
+        html: '<div style="background:' + numberBackground + '; border:2px solid #333; border-radius:50%; width:24px; height:24px; display:flex;align-items:center;justify-content:center;font-weight:bold;font-size:12px;color:#333;">' + (originalIndex + 1) + '</div>',
+        iconSize: [24, 24],
+        iconAnchor: [12, 12]
+      });
+      let numberLabel = L.marker([pt.lat, pt.lon], {icon: numberIcon, interactive: false, zIndexOffset: 500});
+      numberLabel.addTo(miniMap);
+      numberLabels.push(numberLabel);
+    }
+  });
+}
+
+/* =========================
+   폴더 설정
+========================= */
+async function loadFolderSettings() {
+  try {
+    // localStorage에서 설정 로드
+    const savedSettings = localStorage.getItem(FOLDER_SETTINGS_KEY);
+    if (savedSettings) {
+      const parsed = JSON.parse(savedSettings);
+      currentFolderSettings = parsed;
+      isDataPathConfigured = localStorage.getItem(DATA_PATH_CONFIGURED_KEY) === 'true';
+      // console.log('저장된 폴더 설정 로드됨:', currentFolderSettings);
+      // console.log('경로 설정 상태:', isDataPathConfigured);
+      
+      // 서버에 설정 적용
+      await applyFolderSettingsToServer();
+    } else {
+      // 기본 설정으로 서버에서 로드
+      const response = await fetch('/api/folder-settings');
+      if (response.ok) {
+        const settings = await response.json();
+        currentFolderSettings = settings;
+        // 기본 경로가 설정되어 있으면 자동으로 경로 설정 완료로 간주
+        isDataPathConfigured = true;
+        localStorage.setItem(DATA_PATH_CONFIGURED_KEY, 'true');
+        // console.log('서버에서 폴더 설정 로드됨:', settings);
+      }
+    }
+    
+    updateUIForPathStatus();
+    
+    // 데이터셋 목록 새로고침만 수행 (자동 로드 비활성화)
+    // await detectAvailableDatasets();
+    
+    // 자동 로드 비활성화 - 사용자가 수동으로 '데이터 로드' 버튼을 눌러야 함
+    // setTimeout(() => {
+    //   autoLoadDatasets();
+    // }, 500);
+  } catch (error) {
+    console.error('폴더 설정 로드 실패:', error);
+  }
+}
+
+async function applyFolderSettingsToServer() {
+  try {
+    const response = await fetch('/api/folder-settings', {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify(currentFolderSettings)
+    });
+    
+    if (response.ok) {
+      // console.log('서버에 폴더 설정 적용됨');
+    } else {
+      // console.error('서버에 폴더 설정 적용 실패');
+    }
+  } catch (error) {
+    console.error('서버 설정 적용 중 오류:', error);
+  }
+}
+
+function updateUIForPathStatus() {
+  const loadDatasetBtn = document.getElementById('loadDatasetBtn');
+  const setDataPathBtn = document.getElementById('setDataPathBtn');
+  // 동적 URL 모드(메뉴 숨김) 또는 요소가 없으면 안전하게 종료
+  if (document.body.classList.contains('hide-menu') || !loadDatasetBtn || !setDataPathBtn) {
+    return;
+  }
+  
+  if (isDataPathConfigured) {
+    loadDatasetBtn.style.opacity = '1';
+    loadDatasetBtn.style.cursor = 'pointer';
+    loadDatasetBtn.title = '데이터셋을 로드합니다';
+    setDataPathBtn.innerHTML = '데이터 경로 재설정';
+  } else {
+    loadDatasetBtn.style.opacity = '0.5';
+    loadDatasetBtn.style.cursor = 'not-allowed';
+    loadDatasetBtn.title = '먼저 데이터 경로를 설정해주세요';
+    setDataPathBtn.innerHTML = '데이터 경로 지정';
+  }
+}
+
+async function saveFolderSettings() {
+  // 경로를 슬래시로 통일하여 저장
+  const normalizePath = (path) => path ? path.trim().replace(/\\/g, '/') : '';
+  
+  const imgFolder = normalizePath(document.getElementById('imgFolderInput').value);
+  const trackFolder = normalizePath(document.getElementById('trackFolderInput').value);
+  const pointFolder = normalizePath(document.getElementById('pointFolderInput').value);
+  const matchFolder = normalizePath(document.getElementById('matchFolderInput').value);
+  const tileFolderEl = document.getElementById('tileFolderInput');
+  const tileFolder = tileFolderEl ? normalizePath(tileFolderEl.value) : '';
+  
+  if (!imgFolder) {
+    alert('이미지 폴더는 필수입니다.');
+    return;
+  }
+  
+  try {
+    const response = await fetch('/api/folder-settings', {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify({
+        img_folder: imgFolder,
+        track_folder: trackFolder,
+        point_folder: pointFolder,
+        match_folder: matchFolder,
+        tile_folder: tileFolder
+      })
+    });
+    
+    const result = await response.json();
+    
+    if (response.ok) {
+      currentFolderSettings = result.settings;
+      
+      // localStorage에 저장
+      localStorage.setItem(FOLDER_SETTINGS_KEY, JSON.stringify(currentFolderSettings));
+      localStorage.setItem(DATA_PATH_CONFIGURED_KEY, 'true');
+      isDataPathConfigured = true;
+      
+      // console.log('폴더 설정 저장됨:', result.settings);
+      alert('데이터 경로가 성공적으로 설정되었습니다.');
+      closeFolderSettingsModal();
+      
+      // UI 업데이트
+      updateUIForPathStatus();
+      
+      // 데이터셋 목록 새로고침만 수행 (자동 로드 비활성화)
+      await detectAvailableDatasets();
+      
+      // 자동 로드 비활성화 - 사용자가 수동으로 '데이터 로드' 버튼을 눌러야 함
+      // setTimeout(() => {
+      //   autoLoadDatasets();
+      // }, 500);
+    } else {
+      const errorMsg = result.error || '알 수 없는 오류';
+      console.error('폴더 설정 저장 실패:', errorMsg);
+      alert('폴더 설정 저장 실패: ' + errorMsg);
+    }
+  } catch (error) {
+    console.error('폴더 설정 저장 중 오류:', error);
+    alert('폴더 설정 저장 중 오류가 발생했습니다: ' + error.message);
+  }
+}
+
+async function openFolderSettingsModal() {
+  // console.log('폴더 설정 모달 열기 시도');
+  const modal = document.getElementById('folderSettingsModal');
+  
+  if (!modal) {
+    console.error('폴더 설정 모달을 찾을 수 없습니다!');
+    return;
+  }
+  
+  // 서버에서 최신 설정 가져오기 (모달을 열 때마다)
+  try {
+    const response = await fetch('/api/folder-settings');
+    if (response.ok) {
+      const serverSettings = await response.json();
+      // 서버에서 가져온 설정으로 업데이트
+      currentFolderSettings = { ...currentFolderSettings, ...serverSettings };
+      // localStorage에도 저장
+      localStorage.setItem(FOLDER_SETTINGS_KEY, JSON.stringify(currentFolderSettings));
+    }
+  } catch (error) {
+    console.error('서버에서 폴더 설정을 가져오는 중 오류:', error);
+    // 오류 발생 시 기존 설정 사용
+  }
+  
+  // 현재 설정값으로 입력 필드 채우기 (항상 서버에서 최신 설정 사용)
+  const imgInput = document.getElementById('imgFolderInput');
+  const trackInput = document.getElementById('trackFolderInput');
+  const pointInput = document.getElementById('pointFolderInput');
+  const matchInput = document.getElementById('matchFolderInput');
+  const tileInput = document.getElementById('tileFolderInput');
+  
+  // 서버에서 가져온 설정값으로 입력 필드 채우기 (항상 최신 값으로 업데이트)
+  if (imgInput) {
+    imgInput.value = currentFolderSettings.img_folder || '';
+    imgInput.setAttribute('value', currentFolderSettings.img_folder || '');
+  }
+  if (trackInput) {
+    trackInput.value = currentFolderSettings.track_folder || '';
+    trackInput.setAttribute('value', currentFolderSettings.track_folder || '');
+  }
+  if (pointInput) {
+    pointInput.value = currentFolderSettings.point_folder || '';
+    pointInput.setAttribute('value', currentFolderSettings.point_folder || '');
+  }
+  if (matchInput) {
+    matchInput.value = currentFolderSettings.match_folder || '';
+    matchInput.setAttribute('value', currentFolderSettings.match_folder || '');
+  }
+  if (tileInput) {
+    tileInput.value = currentFolderSettings.tile_folder || '';
+    tileInput.setAttribute('value', currentFolderSettings.tile_folder || '');
+  }
+  
+  modal.style.display = 'flex';
+  closeMenus();
+  // console.log('폴더 설정 모달이 열렸습니다');
+}
+
+function closeFolderSettingsModal() {
+  document.getElementById('folderSettingsModal').style.display = 'none';
+}
+
+/* =========================
+   경로 타입 선택 모달
+========================= */
+function openPathTypeSelectionModal() {
+  const modal = document.getElementById('pathTypeSelectionModal');
+  modal.style.display = 'flex';
+  closeMenus();
+}
+
+function closePathTypeSelectionModal() {
+  document.getElementById('pathTypeSelectionModal').style.display = 'none';
+}
+
+/* =========================
+   개별 폴더 경로 설정
+========================= */
+function openIndividualPathModal(pathType) {
+  currentPathType = pathType;
+  const modal = document.getElementById('individualPathModal');
+  const title = document.getElementById('individualPathTitle');
+  const description = document.getElementById('individualPathDescription');
+  const currentPathDisplay = document.getElementById('currentPathDisplay');
+  const input = document.getElementById('individualPathInput');
+  const help = document.getElementById('individualPathHelp');
+  
+  // 타입별 설정
+  const configs = {
+    'gpx': {
+      title: '🗺️ GPX 폴더 경로 지정',
+      description: 'GPX 파일들이 저장된 폴더 경로를 설정하세요.',
+      currentPath: currentFolderSettings.gpx_folder,
+      placeholder: '예: static/gpx',
+      helpText: 'GPX 파일들이 저장된 폴더 경로를 입력하세요'
+    },
+    'img': {
+      title: '📁 IMG 폴더 경로 지정',
+      description: '파노라마 이미지들이 저장된 폴더 경로를 설정하세요.',
+      currentPath: currentFolderSettings.img_folder,
+      placeholder: '예: static/img',
+      helpText: '파노라마 이미지들이 저장된 폴더 경로를 입력하세요'
+    },
+    'csv': {
+      title: '📊 CSV 폴더 경로 지정',
+      description: '매칭 테이블 CSV 파일들이 저장된 폴더 경로를 설정하세요.',
+      currentPath: currentFolderSettings.csv_folder,
+      placeholder: '예: static/match',
+      helpText: '매칭 테이블 CSV 파일들이 저장된 폴더 경로를 입력하세요'
+    }
+  };
+  
+  const config = configs[pathType];
+  if (!config) {
+    console.error('알 수 없는 경로 타입:', pathType);
+    return;
+  }
+  
+  title.textContent = config.title;
+  description.textContent = config.description;
+  currentPathDisplay.textContent = config.currentPath;
+  input.placeholder = config.placeholder;
+  input.value = config.currentPath;
+  help.textContent = config.helpText;
+  
+  modal.style.display = 'flex';
+  closeMenus();
+}
+
+function closeIndividualPathModal() {
+  document.getElementById('individualPathModal').style.display = 'none';
+  currentPathType = null;
+}
+
+function openPathBrowser() {
+  // 바로 파일 탐색기 열기
+  openFileDialog();
+}
+
+function closePathHelper() {
+  document.getElementById('pathHelperModal').style.display = 'none';
+}
+
+function updatePathHelperContent() {
+  const pathTypeNames = {
+    'gpx': 'GPX',
+    'img': 'IMG', 
+    'csv': 'CSV'
+  };
+  
+  const currentPath = currentFolderSettings[`${currentPathType}_folder`];
+  const pathTypeName = pathTypeNames[currentPathType];
+  
+  // 모달 제목 업데이트
+  document.getElementById('pathHelperTitle').textContent = `📁 ${pathTypeName} 폴더 경로 입력 도우미`;
+  
+  // 현재 경로 표시
+  document.getElementById('pathHelperCurrentPath').textContent = currentPath;
+  
+  // 경로 입력 예시 업데이트
+  const examples = document.getElementById('pathExamples');
+  examples.innerHTML = `
+    <div style="margin-bottom: 10px;">
+      <strong>상대 경로 (권장):</strong><br>
+      <code style="background: #f5f5f5; padding: 2px 4px; border-radius: 3px;">static/gpx</code> - static 폴더 안의 gpx 폴더<br>
+      <code style="background: #f5f5f5; padding: 2px 4px; border-radius: 3px;">data/images</code> - data 폴더 안의 images 폴더<br>
+      <code style="background: #f5f5f5; padding: 2px 4px; border-radius: 3px;">./uploads</code> - 현재 프로젝트 폴더의 uploads 폴더
+    </div>
+    <div style="margin-bottom: 10px;">
+      <strong>절대 경로:</strong><br>
+      <code style="background: #f5f5f5; padding: 2px 4px; border-radius: 3px;">C:/Users/사용자/Documents/data</code> - Windows<br>
+      <code style="background: #f5f5f5; padding: 2px 4px; border-radius: 3px;">/Users/사용자/Documents/data</code> - Mac/Linux
+    </div>
+  `;
+}
+
+function applyPathFromHelper() {
+  const input = document.getElementById('individualPathInput');
+  const helperInput = document.getElementById('pathHelperInput');
+  const absoluteInput = document.getElementById('absolutePathInput');
+  
+  // 절대 경로가 입력되어 있으면 절대 경로 사용, 아니면 상대 경로 사용
+  const selectedPath = absoluteInput.value.trim() || helperInput.value.trim();
+  
+  if (selectedPath) {
+    input.value = selectedPath;
+    closePathHelper();
+  } else {
+    alert('경로를 입력해주세요.');
+  }
+}
+
+function copyFromRelativeToAbsolute() {
+  const relativeInput = document.getElementById('pathHelperInput');
+  const absoluteInput = document.getElementById('absolutePathInput');
+  
+  const relativePath = relativeInput.value.trim();
+  if (!relativePath) {
+    alert('먼저 상대 경로를 입력하거나 폴더를 선택해주세요.');
+    return;
+  }
+  
+  // 사용자에게 절대 경로 입력 요청
+  const absolutePath = prompt(
+    `상대 경로: ${relativePath}\n\n` +
+    `이 경로의 절대 경로를 입력해주세요:\n` +
+    `예시:\n` +
+    `• Windows: C:\\Users\\사용자\\Documents\\panoview\\${relativePath}\n` +
+    `• Mac/Linux: /Users/사용자/Documents/panoview/${relativePath}\n\n` +
+    `현재 프로젝트 폴더: ${window.location.origin.replace('http://', '').replace('https://', '')}`,
+    relativePath
+  );
+  
+  if (absolutePath !== null && absolutePath.trim()) {
+    absoluteInput.value = absolutePath.trim();
+  }
+}
+
+function openFileDialog() {
+  // 파일 선택 다이얼로그 열기 (폴더 선택)
+  const input = document.createElement('input');
+  input.type = 'file';
+  input.webkitdirectory = true; // 폴더 선택 허용
+  input.directory = true;
+  input.multiple = true;
+  
+  input.onchange = function(e) {
+    const files = Array.from(e.target.files);
+    if (files.length > 0) {
+      // 첫 번째 파일의 경로에서 폴더 경로 추출
+      const firstFile = files[0];
+      
+      if (firstFile.webkitRelativePath) {
+        const pathParts = firstFile.webkitRelativePath.split('/');
+        const folderPath = pathParts[0];
+        
+        // 절대 경로는 사용자가 직접 입력해야 함 (브라우저 보안 정책)
+        // 현재 경로를 기준으로 제안
+        const currentPath = document.getElementById('individualPathInput')?.value || '';
+        const suggestedPath = currentPath || `static/${folderPath}`;
+        const absolutePath = prompt(
+          `폴더를 선택하셨습니다.\n\n` +
+          `선택한 폴더: ${folderPath}\n\n` +
+          `절대 경로를 입력해주세요:`,
+          suggestedPath
+        );
+        
+        if (!absolutePath || !absolutePath.trim()) {
+          return; // 사용자가 취소
+        }
+        
+        // 개별 경로 모달의 입력 필드에 직접 설정
+        document.getElementById('individualPathInput').value = absolutePath;
+        
+        // 경로 도우미 모달 닫기
+        document.getElementById('pathHelperModal').style.display = 'none';
+        
+        alert(`폴더가 선택되었습니다!\n경로: ${absolutePath}\n\n저장 버튼을 클릭하여 경로를 설정하세요.`);
+      } else {
+        alert('폴더 선택이 완료되었습니다.\n경로 도우미에서 직접 경로를 입력해주세요.');
+      }
+    }
+  };
+  
+  input.click();
+}
+
+async function openFolderBrowser(inputId) {
+  // 입력 필드 확인
+  const inputElement = document.getElementById(inputId);
+  if (!inputElement) {
+    console.error(`❌ 입력 필드를 찾을 수 없습니다: ${inputId}`);
+    alert(`입력 필드를 찾을 수 없습니다: ${inputId}`);
+    return;
+  }
+  
+  let folderPath = '';
+  
+  // 최신 브라우저의 showDirectoryPicker API 사용 시도
+  if (window.showDirectoryPicker) {
+    try {
+      const directoryHandle = await window.showDirectoryPicker();
+      // DirectoryHandle의 name 속성으로 폴더명 확인
+      const folderName = directoryHandle.name;
+      
+      // 자동으로 경로 추정 (prompt 없이)
+      const currentPath = inputElement.value.trim();
+      let autoPath = '';
+      
+      if (currentPath && currentPath.length > 0) {
+        const isAbsolute = currentPath.length >= 2 && currentPath[1] === ':';
+        if (isAbsolute) {
+          // 현재 경로가 절대 경로인 경우, 상위 디렉토리 + 선택한 폴더명
+          const currentParts = currentPath.replace(/[/\\]+$/, '').split(/[/\\]/);
+          const parentPath = currentParts.slice(0, -1).join('/');
+          autoPath = parentPath + '/' + folderName;
+        } else {
+          autoPath = `D:/PycharmProjects/panoview/static/${folderName}`;
+        }
+      } else {
+        // 다른 입력 필드의 경로를 참고
+        const otherInputs = ['imgFolderInput', 'trackFolderInput', 'pointFolderInput', 'matchFolderInput', 'tileFolderInput'];
+        for (const otherId of otherInputs) {
+          if (otherId !== inputId) {
+            const otherValue = document.getElementById(otherId)?.value.trim();
+            if (otherValue && otherValue.length > 0) {
+              const isOtherAbsolute = otherValue.length >= 2 && otherValue[1] === ':';
+              if (isOtherAbsolute) {
+                const parts = otherValue.replace(/[/\\]+$/, '').split(/[/\\]/);
+                if (parts.length >= 2) {
+                  parts.pop();
+                  autoPath = parts.join('/') + '/' + folderName;
+                  break;
+                }
+              } else {
+                autoPath = `D:/PycharmProjects/panoview/static/${folderName}`;
+                break;
+              }
+            }
+          }
+        }
+        if (!autoPath) {
+          autoPath = `D:/PycharmProjects/panoview/static/${folderName}`;
+        }
+      }
+      
+      folderPath = autoPath;
+    } catch (error) {
+      // 사용자가 취소한 경우
+      if (error.name !== 'AbortError') {
+        console.error('폴더 선택 오류:', error);
+      }
+      return;
+    }
+  } else {
+    // showDirectoryPicker가 지원되지 않는 경우 기존 webkitdirectory 방식 사용
+    const input = document.createElement('input');
+    input.type = 'file';
+    input.webkitdirectory = true;
+    input.directory = true;
+    input.multiple = true;
+    
+    await new Promise((resolve) => {
+      input.onchange = function(e) {
+        const files = Array.from(e.target.files);
+        
+        if (files.length > 0) {
+          const firstFile = files[0];
+          
+          // 입력 필드 다시 찾기
+          const inputElement = document.getElementById(inputId);
+          if (!inputElement) {
+            console.error(`❌ 입력 필드를 찾을 수 없습니다: ${inputId}`);
+            alert(`입력 필드를 찾을 수 없습니다: ${inputId}`);
+            resolve();
+            return;
+          }
+          
+          // file.path는 대부분의 브라우저에서 보안상 제공되지 않음
+          // 자동으로 경로를 추정하여 입력 필드에 설정 (prompt 없이)
+          if (firstFile.path && firstFile.path.trim()) {
+            // file.path가 제공되는 경우 (Edge 등 일부 브라우저) - 직접 경로 사용
+            folderPath = firstFile.path;
+            folderPath = folderPath.replace(/\\[^\\]*$/, ''); // 파일명 제거
+            folderPath = folderPath.replace(/\\/g, '/');
+            resolve();
+            return;
+          } else {
+            // file.path가 없는 경우 - webkitRelativePath로 폴더명 추출 후 자동 경로 생성
+            let selectedFolderName = '';
+            if (firstFile.webkitRelativePath) {
+              const pathParts = firstFile.webkitRelativePath.split('/');
+              selectedFolderName = pathParts[0];
+            } else {
+              // 파일명에서 폴더명 추정
+              selectedFolderName = firstFile.name || 'selected';
+            }
+            
+            // 현재 입력 필드의 경로 확인
+            const currentValue = inputElement.value.trim();
+            let autoPath = '';
+            
+            if (currentValue && currentValue.length > 0) {
+              // 현재 경로가 절대 경로인지 확인
+              const isAbsolute = currentValue.length >= 2 && currentValue[1] === ':';
+              
+              if (isAbsolute) {
+                // 현재 경로가 절대 경로인 경우, 상위 디렉토리 + 선택한 폴더명
+                const currentParts = currentValue.replace(/[/\\]+$/, '').split(/[/\\]/);
+                const parentPath = currentParts.slice(0, -1).join('/');
+                autoPath = parentPath + '/' + selectedFolderName;
+              } else {
+                // 현재 경로가 상대 경로인 경우, 기본 경로 추정
+                // 프로젝트 루트 추정 (일반적인 구조 가정)
+                autoPath = `D:/PycharmProjects/panoview/static/${selectedFolderName}`;
+              }
+            } else {
+              // 다른 입력 필드의 경로를 참고하여 기본 경로 추정
+              const otherInputs = ['imgFolderInput', 'trackFolderInput', 'pointFolderInput', 'matchFolderInput', 'tileFolderInput'];
+              
+              for (const otherId of otherInputs) {
+                if (otherId !== inputId) {
+                  const otherValue = document.getElementById(otherId)?.value.trim();
+                  if (otherValue && otherValue.length > 0) {
+                    const isOtherAbsolute = otherValue.length >= 2 && otherValue[1] === ':';
+                    if (isOtherAbsolute) {
+                      // 다른 입력 필드가 절대 경로인 경우, 상위 디렉토리 + 선택한 폴더명
+                      const parts = otherValue.replace(/[/\\]+$/, '').split(/[/\\]/);
+                      if (parts.length >= 2) {
+                        parts.pop();
+                        autoPath = parts.join('/') + '/' + selectedFolderName;
+                        break;
+                      }
+                    } else {
+                      // 다른 입력 필드도 상대 경로인 경우, 기본 경로 추정
+                      autoPath = `D:/PycharmProjects/panoview/static/${selectedFolderName}`;
+                      break;
+                    }
+                  }
+                }
+              }
+              
+              if (!autoPath) {
+                // 기본 경로 추정 (프로젝트 루트의 static 폴더)
+                autoPath = `D:/PycharmProjects/panoview/static/${selectedFolderName}`;
+              }
+            }
+            
+            // 자동으로 추정한 경로를 사용 (prompt 없이)
+            folderPath = autoPath;
+            resolve();
+          }
+        } else {
+          resolve();
+        }
+      };
+      
+      input.click();
+    });
+  }
+  
+  // 경로 설정 (슬래시로 통일)
+  if (folderPath) {
+    folderPath = folderPath.replace(/\\/g, '/'); // 백슬래시를 슬래시로 통일
+    console.log(`[경로 설정] ${inputId} → "${folderPath}"`);
+    
+    // 입력 필드 다시 찾기 (비동기 처리 후 DOM이 변경되었을 수 있음)
+    const finalInputElement = document.getElementById(inputId);
+    if (!finalInputElement) {
+      console.error(`❌ 입력 필드를 찾을 수 없습니다: ${inputId}`);
+      return;
+    }
+    
+    // 여러 방법으로 값 설정 (강제 업데이트)
+    finalInputElement.setAttribute('value', folderPath);
+    finalInputElement.value = folderPath;
+    
+    // Native setter 강제 사용
+    try {
+      const descriptor = Object.getOwnPropertyDescriptor(window.HTMLInputElement.prototype, 'value');
+      if (descriptor && descriptor.set) {
+        descriptor.set.call(finalInputElement, folderPath);
+      }
+    } catch (e) {
+      // Native setter 실패는 조용히 무시
+    }
+    
+    // 입력 필드에 포커스 및 변경 이벤트 트리거
+    finalInputElement.focus();
+    finalInputElement.select();
+    
+    // 다양한 이벤트로 강제 업데이트
+    const events = ['input', 'change'];
+    events.forEach(eventType => {
+      const event = new Event(eventType, { bubbles: true, cancelable: true });
+      finalInputElement.dispatchEvent(event);
+    });
+    
+    // 값이 제대로 설정되었는지 확인 (한 번만, 실패 시에만 재시도)
+    let checkCount = 0;
+    const maxChecks = 3;
+    
+    const checkValue = (isRetry = false) => {
+      checkCount++;
+      const actualValue = finalInputElement.value;
+      
+      if (actualValue === folderPath) {
+        // 성공 - 한 번만 로그 출력
+        if (!isRetry) {
+          console.log(`✅ 경로 설정 성공: "${folderPath}"`);
+        }
+        // 성공 표시
+        finalInputElement.style.borderColor = '#4caf50';
+        finalInputElement.style.borderWidth = '2px';
+        setTimeout(() => {
+          finalInputElement.style.borderColor = '';
+          finalInputElement.style.borderWidth = '';
+        }, 2000);
+        return true;
+      } else if (checkCount < maxChecks) {
+        // 실패 - 재시도 (조용히)
+        finalInputElement.setAttribute('value', folderPath);
+        finalInputElement.value = folderPath;
+          try {
+            const descriptor = Object.getOwnPropertyDescriptor(window.HTMLInputElement.prototype, 'value');
+            if (descriptor && descriptor.set) {
+              descriptor.set.call(finalInputElement, folderPath);
+            }
+          } catch (e) {
+            // ignore
+          }
+          events.forEach(eventType => {
+            finalInputElement.dispatchEvent(new Event(eventType, { bubbles: true }));
+          });
+          
+          // 다음 확인은 지연 후 실행
+          setTimeout(() => checkValue(true), 100 * checkCount);
+          return false;
+        } else {
+          // 최종 실패
+          console.warn(`⚠️ 경로 설정 실패 (최종 시도): 입력값="${actualValue}", 설정값="${folderPath}"`);
+          return false;
+        }
+      };
+      
+    // 즉시 확인
+    checkValue();
+  }
+}
+
+
+function closePathBrowser() {
+  document.getElementById('pathBrowserModal').style.display = 'none';
+}
+
+function updatePathBrowserContent() {
+  const pathTypeNames = {
+    'gpx': 'GPX',
+    'img': 'IMG', 
+    'csv': 'CSV'
+  };
+  
+  const currentPath = currentFolderSettings[`${currentPathType}_folder`];
+  const pathTypeName = pathTypeNames[currentPathType];
+  
+  // 모달 제목 업데이트
+  document.getElementById('pathBrowserTitle').textContent = `📁 ${pathTypeName} 폴더 경로 탐색`;
+  
+  // 현재 경로 표시
+  document.getElementById('pathBrowserCurrentPath').textContent = currentPath;
+  
+  // 빠른 경로 버튼들 업데이트
+  const quickPaths = document.getElementById('quickPathButtons');
+  quickPaths.innerHTML = '';
+  
+  const commonPaths = [
+    { name: '현재 프로젝트 폴더', path: './', desc: '프로젝트 루트 폴더' },
+    { name: 'Static 폴더', path: 'static/', desc: '웹 정적 파일 폴더' },
+    { name: '상위 폴더', path: '../', desc: '프로젝트 상위 폴더' },
+    { name: 'Data 폴더', path: 'data/', desc: '데이터 저장 폴더' },
+    { name: '현재 경로 유지', path: currentPath, desc: '현재 설정된 경로' }
+  ];
+  
+  commonPaths.forEach((item, index) => {
+    const button = document.createElement('button');
+    button.className = 'quick-path-btn';
+    button.style.cssText = `
+      padding: 10px 12px; margin: 4px; background: #f8f9fa; border: 1px solid #dee2e6; 
+      border-radius: 6px; cursor: pointer; text-align: left; font-size: 0.9em; 
+      transition: all 0.2s; width: 100%; display: block;
+    `;
+    button.innerHTML = `
+      <div style="font-weight: 600; color: #333;">${item.name}</div>
+      <div style="font-size: 0.8em; color: #666; margin-top: 2px;">${item.path}</div>
+      <div style="font-size: 0.7em; color: #999; margin-top: 1px;">${item.desc}</div>
+    `;
+    
+    button.onmouseover = function() {
+      this.style.background = '#e3f2fd';
+      this.style.borderColor = '#2196f3';
+    };
+    button.onmouseout = function() {
+      this.style.background = '#f8f9fa';
+      this.style.borderColor = '#dee2e6';
+    };
+    
+    button.onclick = function() {
+      document.getElementById('individualPathInput').value = item.path;
+      closePathBrowser();
+    };
+    
+    quickPaths.appendChild(button);
+  });
+}
+
+function applyPathFromBrowser() {
+  const input = document.getElementById('individualPathInput');
+  const browserInput = document.getElementById('pathBrowserInput');
+  
+  if (browserInput.value.trim()) {
+    input.value = browserInput.value.trim();
+  }
+  closePathBrowser();
+}
+
+async function saveIndividualPath() {
+  if (!currentPathType) {
+    alert('경로 타입이 설정되지 않았습니다.');
+    return;
+  }
+  
+  const newPath = document.getElementById('individualPathInput').value.trim();
+  if (!newPath) {
+    alert('새 경로를 입력해주세요.');
+    return;
+  }
+  
+  try {
+    // 서버에 개별 경로 업데이트 요청
+    const response = await fetch('/api/folder-settings', {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify({
+        ...currentFolderSettings,
+        [`${currentPathType}_folder`]: newPath
+      })
+    });
+    
+    const result = await response.json();
+    
+    if (response.ok) {
+      // 로컬 설정 업데이트
+      currentFolderSettings[`${currentPathType}_folder`] = newPath;
+      
+      // localStorage에 저장
+      localStorage.setItem(FOLDER_SETTINGS_KEY, JSON.stringify(currentFolderSettings));
+      localStorage.setItem(DATA_PATH_CONFIGURED_KEY, 'true');
+      isDataPathConfigured = true;
+      
+      // console.log(`${currentPathType} 폴더 경로 업데이트됨:`, newPath);
+      alert(`${currentPathType.toUpperCase()} 폴더 경로가 성공적으로 설정되었습니다.`);
+      closeIndividualPathModal();
+      
+      // UI 업데이트
+      updateUIForPathStatus();
+      
+      // 데이터셋 목록 새로고침
+      await detectAvailableDatasets();
+    } else {
+      alert('폴더 경로 설정 실패: ' + result.error);
+    }
+  } catch (error) {
+    console.error('개별 폴더 경로 설정 중 오류:', error);
+    alert('폴더 경로 설정 중 오류가 발생했습니다.');
+  }
+}
+
+/* =========================
+   데이터셋
+========================= */
+async function detectAvailableDatasets() {
+  try {
+    const res = await fetch('/api/datasets');
+    if (!res.ok) throw new Error('데이터셋 목록을 가져올 수 없습니다.');
+    const response = await res.json();
+    
+    // 새로운 API 응답 형식 처리
+    const data = response.success ? response.datasets : [];
+    
+    // 완전한 데이터셋만 표시 (Shapefile 데이터셋 기준)
+    availableDatasets = (data || []).map(d => ({
+      name: d.name,
+      shpFile: d.shp_file,
+      hasImages: !!d.has_images,
+      hasShp: !!d.has_shp,
+      hasCsv: !!d.has_csv,
+      isComplete: !!d.is_complete
+    }));
+    return availableDatasets;
+  } catch (error) {
+    console.error('데이터셋 감지 중 오류:', error);
+    availableDatasets = [];
+    return [];
+  }
+}
+
+async function loadDatasets(names, useTiles = false) {
+  // console.log('=== loadDatasets 함수 호출됨 ===');
+  // console.log('로드할 데이터셋 이름들:', names);
+  // console.log('use_tiles:', useTiles);
+  
+  try {
+    // console.log('api/load-datasets 요청 시작');
+    const res = await fetch('/api/load-datasets', {
+      method: 'POST',
+      headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify({ 
+        datasets: names,
+        use_tiles: useTiles
+      })
+    });
+    // console.log('응답 상태:', res.status);
+    const data = await res.json();
+    // console.log('응답 데이터:', data);
+    
+    if (!res.ok || !data.success) throw new Error(data.error || '로드 실패');
+    points = data.points || [];
+    console.log('포인트 데이터 로드 완료:', points.length, '개');
+    
+    // 타일 정보 확인 (처음 3개 포인트)
+    if (points.length > 0) {
+      console.log('[데이터 로드] 처음 3개 포인트의 tile_base_url 확인:');
+      for (let i = 0; i < Math.min(3, points.length); i++) {
+        console.log(`  포인트 ${i}: tile_base_url="${points[i].tile_base_url || '(없음)'}", image="${points[i].image}"`);
+      }
+    }
+
+    if (miniMap) {
+      // renderMarkers는 async이지만 논블로킹으로 처리
+      // track 로드가 완료되기 전에 다른 작업이 실행되어도 중단되지 않도록
+      renderMarkers().catch(err => {
+        console.error('[loadDatasets] renderMarkers 실패:', err);
+      });
+      
+      if (points.length > 0) {
+        // 첫 번째 노드를 중심으로 적절히 확대된 상태로 설정
+        const firstPoint = points[0];
+        if (firstPoint) {
+          miniMap.setView([firstPoint.lat, firstPoint.lon], 17);
+        }
+      }
+    }
+    
+    // marzipanoViewer 제거는 track 로드와 독립적으로 실행
+    // track 로드가 완료되기 전에 실행되어도 문제없도록
+    if (marzipanoViewer) {
+      marzipanoViewer.destroy(); marzipanoViewer = null; marzipanoScenes = [];
+    }
+    // 자동 0번 표시 방지: 동적 타겟이 있으면 건너뜀
+    let hasTarget = false;
+    try {
+      if (window.targetNodeInfo && typeof window.targetNodeInfo.target_index === 'number') hasTarget = true;
+
+      const v = `; ${document.cookie}`;
+      const parts = v.split(`; target_node_id=`);
+      if (parts.length === 2 && parts.pop().split(';').shift()) hasTarget = true;
+
+      if (window._hasPendingTargetNode) hasTarget = true;
+
+      const initId = getInitialTargetNodeId();
+      if (initId) hasTarget = true;
+    } catch(e) {}
+
+    if (points.length && !hasTarget) {
+      showImage(0);
+      console.log('타겟 없음, 기본 0번 표시');
+    }
+    isLoadingDatasets = false; // 플래그 리셋
+    
+    // 데이터셋 로드 완료 후 콜백 실행
+    setTimeout(() => {
+      try {
+        (window.__afterDatasetLoadedCallbacks || []).forEach(cb => {
+          try { cb(); } catch (e) { console.error('콜백 실행 오류:', e); }
+        });
+      } catch(e) { console.error('콜백 실행 중 오류:', e); }
+    }, 100);
+    
+    return true;
+  } catch (e) {
+    console.error('데이터셋 로드 중 오류:', e);
+    alert(`데이터셋 로드 실패: ${e.message}`);
+    isLoadingDatasets = false; // 플래그 리셋
+    return false;
+  }
+}
+
+async function showDatasetSelectionModal() {
+  // 사용자가 수동으로 데이터셋을 선택하도록 모달 표시
+  showDatasetSelectionModalOriginal();
+}
+
+function autoLoadDatasets() {
+  // 중복 실행 방지
+  if (isLoadingDatasets) {
+    console.log('데이터셋 로드가 이미 진행 중입니다.');
+    return;
+  }
+  
+  // console.log('=== autoLoadDatasets 함수 호출됨 ===');
+  
+  // 경로 설정 확인
+  if (!isDataPathConfigured) {
+    // console.log('경로 설정이 안됨');
+    alert('먼저 데이터 경로를 설정해주세요.\n파일 → 데이터 경로 지정');
+    return;
+  }
+  
+  isLoadingDatasets = true;
+  // console.log('경로 설정 확인됨, 데이터셋 목록 가져오기 시작');
+  
+  // 데이터셋 목록 가져오기
+  fetch('/api/datasets')
+    .then(response => response.json())
+    .then(data => {
+      // console.log('API 응답:', data); // 디버깅용
+      
+      if (data.success && data.datasets && data.datasets.length > 0) {
+        // 완전한 데이터셋만 필터링
+        const completeDatasets = data.datasets.filter(ds => ds.is_complete);
+        // console.log('완전한 데이터셋:', completeDatasets); // 디버깅용
+        
+        if (completeDatasets.length > 0) {
+          // 첫 번째 완전한 데이터셋을 자동으로 로드
+          const datasetNames = [completeDatasets[0].name];
+          // console.log('로드할 데이터셋:', datasetNames); // 디버깅용
+          // console.log('loadDatasets 함수 호출 시작');
+          loadDatasets(datasetNames);
+        } else {
+          // console.log('완전한 데이터셋이 없음');
+          alert('사용 가능한 완전한 데이터셋이 없습니다.\n데이터 경로를 확인해주세요.');
+          isLoadingDatasets = false;
+        }
+      } else {
+        // console.log('데이터셋 없음 또는 오류:', data);
+        alert('사용 가능한 데이터셋이 없습니다.\n데이터 경로를 확인해주세요.');
+        isLoadingDatasets = false;
+      }
+    })
+    .catch(error => {
+      console.error('데이터셋 목록 요청 오류:', error);
+      alert('데이터셋 목록을 가져오는데 실패했습니다.');
+      isLoadingDatasets = false;
+    });
+}
+
+async function showDatasetSelectionModalOriginal() {
+  // 경로 설정 확인
+  if (!isDataPathConfigured) {
+    alert('먼저 데이터 경로를 설정해주세요.\n파일 → 데이터 경로 지정');
+    return;
+  }
+  
+  const modal = document.getElementById('datasetSelectionModal');
+  const list = document.getElementById('datasetList');
+  selectedDatasetNames.clear();
+  list.innerHTML = '<div style="color:#888;padding:8px;">불러오는 중…</div>';
+
+  // 항상 최신 목록을 가져오도록 보장
+  try {
+    await detectAvailableDatasets();
+  } catch (e) { console.warn(e); }
+
+  if (!availableDatasets.length) {
+    list.innerHTML = '<div style="color:#888;padding:8px;">사용 가능한 데이터셋이 없습니다.</div>';
+  } else {
+    const header = document.createElement('div');
+    header.style.cssText = 'display:flex;gap:8px;align-items:center; margin-bottom:8px;';
+    header.innerHTML =
+      '<input id="dsFilter" type="text" placeholder="필터…" style="flex:1;padding:6px 8px;border:1px solid #ccc;border-radius:4px;">' +
+      '<label style="display:flex;align-items:center;gap:6px;font-size:0.9em;">' +
+        '<input id="dsCheckAll" type="checkbox"> 전체 선택' +
+      '</label>';
+    list.appendChild(header);
+
+    const wrap = document.createElement('div');
+    wrap.id = 'dsWrap';
+    list.appendChild(wrap);
+
+    const renderRows = (rows) => {
+      wrap.innerHTML = '';
+      rows.forEach(ds => {
+        const row = document.createElement('label');
+        row.style.cssText = 'display:flex;align-items:center;gap:10px;padding:8px;border:1px solid #ddd;border-radius:6px;margin:6px 0;cursor:pointer;';
+        
+        // 상태 아이콘 생성
+        const statusIcons = [];
+        if (ds.hasImages) statusIcons.push('📁'); // 이미지 폴더
+        if (ds.hasGpx) statusIcons.push('🗺️'); // GPX 파일
+        if (ds.hasCsv) statusIcons.push('📊'); // CSV 파일
+        const statusText = statusIcons.join(' ') || '❌';
+        
+        row.innerHTML =
+          '<input type="checkbox" class="ds-check" data-name="' + ds.name + '">' +
+          '<div style="font-weight:700;">' + ds.name + '</div>' +
+          '<div style="color:#666;font-size:0.9em;margin-left:6px;">' + statusText + '</div>';
+        wrap.appendChild(row);
+      });
+
+      wrap.querySelectorAll('.ds-check').forEach(cb => {
+        cb.addEventListener('change', (e) => {
+          const name = e.target.dataset.name;
+          if (e.target.checked) selectedDatasetNames.add(name);
+          else selectedDatasetNames.delete(name);
+        });
+      });
+    };
+
+    renderRows(availableDatasets);
+
+    header.querySelector('#dsFilter').addEventListener('input', (e) => {
+      const q = e.target.value.trim().toLowerCase();
+      const filtered = q
+        ? availableDatasets.filter(d => d.name.toLowerCase().includes(q))
+        : availableDatasets;
+      renderRows(filtered);
+    });
+
+    header.querySelector('#dsCheckAll').addEventListener('change', (e) => {
+      const check = e.target.checked;
+      selectedDatasetNames.clear();
+      wrap.querySelectorAll('.ds-check').forEach(cb => {
+        cb.checked = check;
+        if (check) selectedDatasetNames.add(cb.dataset.name);
+      });
+    });
+  }
+  modal.style.display = 'flex';
+  closeMenus();
+}
+
+/* =========================
+   지도 하이라이트 & 탐색
+========================= */
+window.__gotoPoint = function(i) { showImage(i); };
+
+function highlight(idx, angleDeg) {
+  if (!points[idx]) return;
+  // 카카오맵 API 주석 처리 - Leaflet만 사용
+  if (highlightOverlay && currentMapType === 'leaflet') miniMap.removeLayer(highlightOverlay);
+  
+  // angleDeg는 원본 이미지 각도 (오프셋 미적용)
+  // 우선순위에 따른 최종 각도 계산
+  const totalOffset = getTotalOffset(idx);
+  const finalAngle = (angleDeg + totalOffset + 360) % 360;
+  
+  // CSV의 원본 angle 값과 최종 각도를 표시
+  const csvOriginalAngle = points[idx] ? points[idx].csv_angle : 0;
+  const csvFinalAngle = points[idx] ? points[idx].final_angle : 0;
+  
+  // console.log(`highlight 함수 - 이미지 ${idx}: CSV원본각도=${csvOriginalAngle}°, 사용자오프셋=${totalOffset}°, CSV최종각도=${csvFinalAngle}°`);
+
+  if (currentMapType === 'leaflet') {
+    const fanDiv = L.divIcon({
+      className: 'highlight-overlay',
+      html:
+        '<div style="position:absolute;left:50%;top:50%;transform:translate(-50%,-50%);width:60px;height:60px;pointer-events:none;">' +
+          makeDirectionFanSVG(finalAngle, 80) +
+          '<div style="position:absolute;left:18px;top:18px;width:24px;height:24px;">' +
+            currentPinSVG +
+          '</div>' +
+        '</div>',
+      iconSize: [60, 60],
+      iconAnchor: [30, 30]
+    });
+    highlightOverlay = L.marker([points[idx].lat, points[idx].lon], {icon: fanDiv, interactive: false, zIndexOffset: 1000});
+    highlightOverlay.addTo(miniMap);
+  }
+  // 카카오맵 API 주석 처리 - Leaflet만 사용
+  /*
+  else if (currentMapType === 'kakao' && kakaoMap) {
+    // Kakao 쪽 하이라이트는 간단하게 마커 아이콘을 교체하거나 오버레이로 확장 가능
+    // (필요시 CustomOverlay 구현)
+  }
+  */
+}
+
+function getDistance(lat1, lon1, lat2, lon2) {
+  const R = 6371000;
+  let toRad = x => x * Math.PI / 180;
+  let dLat = toRad(lat2 - lat1);
+  let dLon = toRad(lon2 - lon1);
+  let a = Math.sin(dLat/2)**2 + Math.cos(toRad(lat1)) * Math.cos(toRad(lat2)) * Math.sin(dLon/2)**2;
+  let c = 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1-a));
+  return R * c;
+}
+
+function getBearing(lat1, lon1, lat2, lon2) {
+  let toRad = x => x * Math.PI / 180;
+  let dLon = toRad(lon2 - lon1);
+  let y = Math.sin(dLon) * Math.cos(toRad(lat2));
+  let x = Math.cos(toRad(lat1)) * Math.sin(toRad(lat2)) - Math.sin(toRad(lat1)) * Math.cos(toRad(lat2)) * Math.cos(dLon);
+  return (Math.atan2(y, x) * 180 / Math.PI + 360) % 360;
+}
+
+function findClosestNodeAtDirection(currentIndex, pointsArr, maxDist, centerYawRad, relDeg) {
+  let origin = pointsArr[currentIndex];
+  let chosenIdx = null, minDist = maxDist + 1;
+  const totalOffset = getTotalOffset(currentIndex);
+  let baseDeg = ((centerYawRad * 180 / Math.PI) + relDeg + totalOffset + 360) % 360;
+  pointsArr.forEach((pt, idx) => {
+    if(idx === currentIndex) return;
+    let dist = getDistance(origin.lat, origin.lon, pt.lat, pt.lon);
+    if(dist > maxDist) return;
+    let bearing = getBearing(origin.lat, origin.lon, pt.lat, pt.lon);
+    let diff = ((bearing - baseDeg + 540) % 360) - 180;
+    if (Math.abs(diff) > 22.5) return;
+    if (dist < minDist) { minDist = dist; chosenIdx = idx; }
+  });
+  return chosenIdx;
+}
+
+function renderRelativeNavArrows(currentIdx, view) {
+  document.querySelectorAll('.nav-arrow').forEach(el => el.remove());
+  
+  let centerYawRad = view.yaw();
+  let dirs = [0,45,90,135,180,225,270,315].map(angle=>({angle}));
+  let container = document.getElementById('viewerContainer');
+  let width = container.clientWidth, height = container.clientHeight;
+  let centerX = width / 2, centerY = height / 2;
+  let radius = Math.min(centerX, centerY) * 0.7;
+  dirs.forEach(d => {
+    let nextIdx = findClosestNodeAtDirection(currentIndex, points, 18, centerYawRad, d.angle);
+    if (nextIdx === null) return;
+    let relRad = d.angle * Math.PI / 180;
+    let x = centerX + radius * Math.sin(relRad);
+    let y = centerY - radius * Math.cos(relRad);
+    let btn = document.createElement('div');
+    btn.className = 'nav-arrow';
+    btn.style.cssText = 'position:absolute; z-index:2000; width:52px; height:52px;' +
+      'background:rgba(0,0,0,0.3); border-radius:50%; display:flex; justify-content:center; align-items:center;' +
+      'cursor:pointer; left:' + x + 'px; top:' + y + 'px;' +
+      'box-shadow:0 4px 10px #2227; border:2px solid #dde; transform:translate(-50%,-50%);';
+    
+    // CSS로 화살표 그리기 (이미지 로딩 없음)
+    let arrowDiv = document.createElement('div');
+    arrowDiv.className = 'nav-arrow-css';
+    arrowDiv.style = 'transform:rotate(' + d.angle + 'deg);pointer-events:none;';
+    btn.appendChild(arrowDiv);
+    btn.onclick = ()=> showImage(nextIdx);
+    container.appendChild(btn);
+  });
+}
+
+function removeSelectionRect() {
+  if (selectionRectDiv && selectionRectDiv.parentNode) selectionRectDiv.parentNode.removeChild(selectionRectDiv);
+  selectionRectDiv = null;
+}
+
+/* =========================
+  날짜 정보 업데이트
+========================= */
+function updateLocationInfo(idx) {
+  const point = points[idx];
+  if (!point) return;
+  
+  const locationInfoDiv = document.getElementById('locationInfo');
+  const dateTextDiv = document.getElementById('dateText');
+  
+  if (!locationInfoDiv || !dateTextDiv) return;
+  
+  // 날짜 정보 표시
+  if (point.date_info && point.date_info.year_month) {
+    dateTextDiv.textContent = point.date_info.year_month;
+  } else if (point.gpx_time) {
+    // gpx_time에서 년월 추출
+    try {
+      const datePart = point.gpx_time.split(' ')[0];
+      if (datePart && datePart.includes('/')) {
+        const [year, month] = datePart.split('/');
+        dateTextDiv.textContent = `${year}년 ${month}월`;
+      } else if (datePart && datePart.includes('-')) {
+        const [year, month] = datePart.split('-');
+        dateTextDiv.textContent = `${year}년 ${month}월`;
+      } else {
+        dateTextDiv.textContent = '날짜 정보 없음';
+      }
+    } catch (e) {
+      dateTextDiv.textContent = '날짜 정보 없음';
+    }
+  } else {
+    dateTextDiv.textContent = '날짜 정보 없음';
+  }
+  
+  // 날짜 정보 표시
+  locationInfoDiv.style.display = 'block';
+}
+
+
+/* =========================
+  이미지 표시(Marzipano)
+========================= */
+const sceneUpgradeState = {};
+
+// 씬이 이미 destroy되었는지 추적
+const destroyedScenes = new WeakSet();
+
+function safeDestroyScene(scene) {
+  if (!scene) return;
+  
+  // 이미 destroy된 씬인지 확인
+  if (destroyedScenes.has(scene)) {
+    return; // 이미 destroy된 씬은 무시
+  }
+  
+  try {
+    // 씬이 유효한지 확인 (destroy 함수가 있는지)
+    if (typeof scene.destroy === 'function') {
+      // destroy 호출 전에 플래그 설정 (동시 호출 방지)
+      destroyedScenes.add(scene);
+      
+      // destroy 호출
+      scene.destroy();
+    }
+  } catch (e) {
+    // destroy 실패는 완전히 무시 (이미 destroy되었거나 stage에서 제거된 경우)
+    // "No such layer in stage" 오류는 여기서 무시됨
+    // 플래그는 이미 설정되었으므로 재시도 방지됨
+    if (e.message && e.message.includes('No such layer')) {
+      // "No such layer in stage" 오류는 조용히 무시 (정상적인 경우)
+      return;
+    }
+    console.warn('[씬 제거] 씬 destroy 중 오류 (무시됨):', e.message || e);
+  }
+}
+
+function replaceSceneEntry(idx, newEntry, options = {}) {
+  const { activate = false, transitionDuration = 500, destroyDelay = 200 } = options;
+  const oldEntry = marzipanoScenes[idx];
+  marzipanoScenes[idx] = newEntry;
+
+  // destroyOld가 한 번만 실행되도록 플래그 추가
+  let destroyOldCalled = false;
+  let destroyOldTimeoutId = null;
+
+  const destroyOld = () => {
+    // 이미 호출되었으면 무시
+    if (destroyOldCalled) {
+      return;
+    }
+    
+    // timeout이 이미 설정되어 있으면 취소
+    if (destroyOldTimeoutId) {
+      clearTimeout(destroyOldTimeoutId);
+      destroyOldTimeoutId = null;
+    }
+    
+    destroyOldCalled = true;
+    
+    if (!oldEntry || !oldEntry.scene || oldEntry.scene === newEntry.scene) {
+      return; // 유효하지 않은 씬이거나 같은 씬이면 무시
+    }
+    
+    // switchTo()가 호출되면 Marzipano가 자동으로 이전 씬을 stage에서 제거할 수 있음
+    // 따라서 destroy를 호출하기 전에 충분한 시간을 기다린 후 안전하게 destroy 시도
+    try {
+      // 충분한 시간이 지난 후 destroy (switchTo 완료 및 자동 제거 대기)
+      // Marzipano가 자동으로 제거했을 수도 있으므로 safeDestroyScene이 이를 처리함
+      destroyOldTimeoutId = setTimeout(() => {
+        // 씬이 여전히 현재 씬인지 확인 (현재 씬이면 destroy하지 않음)
+        try {
+          if (marzipanoViewer && marzipanoViewer.scene) {
+            const currentScene = marzipanoViewer.scene();
+            // 현재 씬이 아니면 안전하게 destroy 시도
+            if (currentScene !== oldEntry.scene) {
+              safeDestroyScene(oldEntry.scene);
+            } else {
+              // 현재 씬이면 destroy하지 않음 (아직 사용 중)
+              console.log('[씬 제거] 씬이 여전히 현재 씬이므로 destroy하지 않음');
+            }
+          } else {
+            // viewer가 없으면 안전하게 destroy 시도
+            safeDestroyScene(oldEntry.scene);
+          }
+        } catch (e) {
+          // 오류 발생 시 조용히 무시
+          console.warn('[씬 제거] destroyOld 실행 중 오류 (무시됨):', e.message || e);
+        }
+        destroyOldTimeoutId = null;
+      }, 800); // switchTo 완료 및 자동 제거 대기 (500ms -> 800ms로 증가)
+    } catch (e) {
+      // 오류 발생 시 조용히 무시
+      console.warn('[씬 제거] destroyOld 설정 중 오류 (무시됨):', e.message || e);
+    }
+  };
+
+  if (activate) {
+    // 새 씬이 렌더링될 시간을 주기 위해 최소한의 프레임 대기 (속도 개선)
+    // 이미지는 이미 프리로드되었으므로 씬이 준비될 때까지 짧게 대기
+    let frameCount = 0;
+    const maxFrames = 2; // 2프레임 대기 (약 33ms, 5프레임 -> 2프레임으로 단축)
+    const maxIterations = 10; // 최대 반복 횟수 제한 (무한 루프 방지)
+    let rafId = null;
+    let isCompleted = false; // 완료 플래그
+    
+    const checkAndSwitch = () => {
+      if (isCompleted) return; // 이미 완료되었으면 중단
+      
+      frameCount++;
+      
+      // 최대 반복 횟수 초과 시 강제 종료
+      if (frameCount > maxIterations) {
+        console.warn(`[씬 전환] 최대 반복 횟수 초과, 강제 종료 (인덱스: ${idx})`);
+        isCompleted = true;
+        try {
+          if (marzipanoScenes[idx] && marzipanoScenes[idx].scene === newEntry.scene && marzipanoViewer) {
+            if (!sceneUpgradeState[idx] || sceneUpgradeState[idx] === 'switching') {
+              try {
+                newEntry.scene.switchTo();
+              } catch (switchError) {
+                console.warn('[씬 전환] switchTo 실패:', switchError);
+              }
+            }
+          }
+        } catch (e) {
+          console.warn('[씬 전환] 전환 중 오류:', e);
+        }
+        // destroyOld는 내부에서 중복 호출을 방지하므로 안전하게 호출 가능
+        setTimeout(destroyOld, destroyDelay + 500);
+        return;
+      }
+      
+      if (frameCount >= maxFrames) {
+        isCompleted = true; // 완료 플래그 설정
+        // 충분한 시간이 지났으므로 전환
+        try {
+          if (marzipanoScenes[idx] && marzipanoScenes[idx].scene === newEntry.scene && marzipanoViewer) {
+            // 업그레이드 상태 확인 (다른 곳에서 switchTo를 호출하지 않도록)
+            if (!sceneUpgradeState[idx] || sceneUpgradeState[idx] === 'switching') {
+              // 새 씬으로 전환 (에러 발생 시 무시)
+              try {
+                newEntry.scene.switchTo();
+              } catch (switchError) {
+                // switchTo 실패는 무시
+                console.warn('[씬 전환] switchTo 실패:', switchError);
+              }
+            }
+          }
+        } catch (e) {
+          // 전체 실패는 무시
+          console.warn('[씬 전환] 전환 중 오류:', e);
+        }
+        // 전환이 완료된 후에 기존 씬 제거 (안정성을 위해 충분한 시간 대기)
+        // destroyOld는 내부에서 중복 호출을 방지하므로 안전하게 호출 가능
+        setTimeout(destroyOld, destroyDelay + 500);
+      } else {
+        rafId = requestAnimationFrame(checkAndSwitch);
+      }
+    };
+    
+    // 첫 프레임부터 시작
+    rafId = requestAnimationFrame(checkAndSwitch);
+  } else {
+    setTimeout(destroyOld, destroyDelay);
+  }
+}
+
+function upgradeScene(idx, { source, geometry, view, currentLevel, levelLabel, onComplete }) {
+  if (!marzipanoViewer || !source || !geometry || !view) {
+    console.warn('[타일 로드] 업그레이드 파라미터 부족, 중단');
+    return false;
+  }
+  if (!marzipanoScenes[idx] || !marzipanoScenes[idx].scene) {
+    console.warn('[타일 로드] 기존 씬이 없어 업그레이드 불가:', idx);
+    return false;
+  }
+  if (sceneUpgradeState[idx] && sceneUpgradeState[idx] !== false) {
+    console.warn(`[타일 로드] 업그레이드 진행 중, 요청 무시 - 포인트 ${idx}`);
+    return false;
+  }
+  sceneUpgradeState[idx] = 'upgrading';
+  try {
+    const isCurrentScene = currentIndex === idx;
+    const newScene = marzipanoViewer.createScene({ source, geometry, view });
+    const newEntry = {
+      scene: newScene,
+      view,
+      initialFov: view.fov ? view.fov() : marzipanoScenes[idx].initialFov,
+      currentLevel
+    };
+    
+    // 씬 교체 전에 상태를 'switching'으로 변경
+    if (isCurrentScene) {
+      sceneUpgradeState[idx] = 'switching';
+    }
+    
+    replaceSceneEntry(idx, newEntry, {
+      activate: isCurrentScene,
+      transitionDuration: 400, // 부드러운 fade 전환 (400ms)
+      destroyDelay: isCurrentScene ? 100 : 50 // 속도 개선: 200/150 -> 100/50
+    });
+    console.log(`[타일 로드] 레벨 ${currentLevel} 씬 재생성 완료 (인덱스: ${idx})`);
+    if (isCurrentScene && levelLabel) {
+      console.log(`[타일 로드] 📊 현재 표시 중인 레벨: ${levelLabel} - 포인트 ${idx}`);
+    }
+    
+    // 완료 콜백 호출 (즉시 호출로 속도 개선)
+    if (onComplete) {
+      // setTimeout 제거하여 즉시 호출 (100ms -> 0ms)
+      onComplete();
+    }
+    
+    return true;
+  } catch (e) {
+    console.error('[타일 로드] 씬 업그레이드 실패:', e);
+    return false;
+  } finally {
+    // 약간의 지연 후 상태 해제 (switchTo 및 destroy 완료 대기)
+    setTimeout(() => {
+      sceneUpgradeState[idx] = false;
+    }, 800); // destroy 완료까지 충분한 시간 대기 (600ms -> 800ms)
+  }
+}
+
+// 씬 생성 로직을 재사용 가능한 함수로 분리
+function createSceneForIndex(idx, prevYaw, prevPitch, hadPrevView) {
+  if (!points[idx] || !points[idx].image || !marzipanoViewer) {
+    return false;
+  }
+  
+  let source;
+  const tileBaseUrl = points[idx].tile_base_url;
+  const img = points[idx].image;
+  
+  // 디버깅: 타일 정보 확인 (항상 출력)
+  console.log(`[타일 로드] 포인트 ${idx}: tile_base_url="${tileBaseUrl || '(없음)'}", image="${img}"`);
+  console.log(`[타일 로드] 포인트 ${idx} 전체 데이터:`, JSON.stringify({
+    tile_base_url: tileBaseUrl,
+    image: img,
+    image_filename: points[idx].image_filename
+  }));
+  
+  if (marzipanoScenes[idx]) {
+    // 이미 씬이 있으면 방향만 업데이트
+    console.log(`[타일 로드] 포인트 ${idx}: 이미 씬이 존재함, 방향만 업데이트`);
+    marzipanoScenes[idx].view.setYaw(prevYaw);
+    marzipanoScenes[idx].view.setPitch(prevPitch);
+    return true;
+  }
+  
+  // 타일이 있는지 확인하고 타일이 있으면 타일 사용, 없으면 원본 이미지 사용
+  // tile_base_url이 빈 문자열이거나 없으면 원본 이미지 사용
+  if (tileBaseUrl && tileBaseUrl.trim() !== '' && points[idx].image && typeof Marzipano !== 'undefined') {
+    // EquirectTiledImageSource가 있으면 타일 직접 사용 (카카오 로드뷰 방식: 저화질 -> 고화질 점진적 로딩)
+    // 레벨 0만 있어도 작동 (고화질 레벨이 없으면 레벨 0만 사용)
+    // Marzipano 객체에서 타일 관련 클래스 확인
+    const marzipanoKeys = Marzipano ? Object.keys(Marzipano).filter(k => k.includes('Tile') || k.includes('Equirect') || k.includes('Image')).join(', ') : 'null';
+    console.log(`[타일 로드] Marzipano 객체 확인:`, typeof Marzipano, marzipanoKeys);
+    
+    // EquirectTiledImageSource 확인 (다양한 이름 시도)
+    const TiledImageSource = Marzipano.EquirectTiledImageSource || 
+                             Marzipano.TiledImageSource ||
+                             (Marzipano.Image && Marzipano.Image.EquirectTiledSource) ||
+                             null;
+    
+    if (TiledImageSource) {
+      try {
+        // 타일 URL 형식: {base}/{level}/{y}/{x}.jpg
+        // Marzipano는 자동으로 저화질(level 0)부터 고화질(level 1, 2...)로 점진적 로딩
+        // 레벨 0만 있어도 작동 (고화질 레벨이 없으면 레벨 0만 사용)
+        const tileUrl = tileBaseUrl + "/{level}/{y}/{x}.jpg";
+        console.log(`[타일 로드] EquirectTiledImageSource 사용 (점진적 로딩): ${tileUrl}`);
+        
+        // 타일 소스 생성 (여러 레벨 지원, 레벨 0만 있어도 작동)
+        // fromUrl은 동기 함수이므로 즉시 반환됨
+        if (typeof TiledImageSource.fromUrl === 'function') {
+          source = TiledImageSource.fromUrl(tileUrl);
+        } else if (typeof TiledImageSource === 'function') {
+          source = new TiledImageSource(tileUrl);
+        } else {
+          throw new Error('EquirectTiledImageSource.fromUrl이 함수가 아닙니다');
+        }
+        
+        console.log(`[타일 로드] ✅ EquirectTiledImageSource 생성 성공`);
+        console.log(`[타일 로드] 생성된 source 타입:`, source ? source.constructor.name : 'null');
+        
+        // 타일 소스가 제대로 생성되었는지 확인
+        if (!source) {
+          throw new Error('EquirectTiledImageSource가 null을 반환했습니다');
+        }
+        
+        // 타일 요청이 실제로 발생하는지 확인하기 위해 이벤트 리스너 추가 (디버깅용)
+        // Marzipano는 내부적으로 타일을 요청하므로, Network 탭에서 확인 가능
+        console.log(`[타일 로드] 타일 요청은 Marzipano가 자동으로 수행합니다. Network 탭에서 /api/tile/... 요청을 확인하세요.`);
+        console.log(`[타일 로드] 예상 타일 URL 패턴: ${tileUrl}`);
+      } catch (e) {
+        console.error(`[타일 로드] ❌ EquirectTiledImageSource 생성 실패:`, e);
+        console.error(`[타일 로드] 오류 상세:`, e.stack || e.message);
+        console.warn(`[타일 로드] 타일 합성 이미지로 폴백`);
+        // 타일 합성 이미지 사용 (점진적 로딩: 레벨 2 → 1 → 0)
+        const tileCompositeBaseUrl = tileBaseUrl.replace('/api/tile/', '/api/tile-composite/');
+        
+        // 1단계: 처음에는 저해상도(레벨 2)로 씬 생성
+        const level2Url = tileCompositeBaseUrl + '?level=2';
+        const level1Url = tileCompositeBaseUrl + '?level=1';
+        const level0Url = tileCompositeBaseUrl + '?level=0';
+        
+        console.log(`[타일 로드] 📊 현재 레벨: 2 (저해상도) - 포인트 ${idx}`);
+        console.log(`[타일 로드] 저해상도 이미지로 시작: ${level2Url}`);
+        source = Marzipano.ImageUrlSource.fromString(level2Url);
+        
+        // 2단계: 레벨 1 프리로드 및 교체
+        const level1Img = new Image();
+        level1Img.onload = function() {
+          console.log(`[타일 로드] 📊 레벨 변경: 2 → 1 (중해상도) - 포인트 ${idx}`);
+          console.log(`[타일 로드] 레벨 1 이미지 프리로드 완료: ${level1Url}`);
+          // 씬 재생성 (현재 씬이어도 레벨 업그레이드 수행)
+          if (marzipanoScenes[idx] && marzipanoScenes[idx].scene && marzipanoViewer) {
+            try {
+              // 현재 방향 유지
+              const currentYaw = marzipanoScenes[idx].view.yaw();
+              const currentPitch = marzipanoScenes[idx].view.pitch();
+              const currentFov = marzipanoScenes[idx].view.fov();
+              
+              // 레벨 1 소스 생성
+              const level1Source = Marzipano.ImageUrlSource.fromString(level1Url);
+              const geometry = new Marzipano.EquirectGeometry([{ width: 1, height: 1 }]);
+              const view = new Marzipano.RectilinearView({ 
+                yaw: currentYaw, 
+                pitch: currentPitch,
+                fov: currentFov
+              });
+              
+              // 이벤트 리스너 재등록
+              const totalOffset = getTotalOffset(idx);
+              let rafId = null;
+              view.addEventListener('change', function () {
+                if (rafId === null) {
+                  rafId = requestAnimationFrame(function() {
+                    rafId = null;
+                    renderRelativeNavArrows(idx, view);
+                    const actualYaw = view.yaw() * 180 / Math.PI;
+                    highlight(idx, actualYaw);
+                  });
+                }
+              });
+              
+              const isCurrentScene = currentIndex === idx;
+              console.log(`[타일 로드] 레벨 1로 씬 재생성 시작 (인덱스: ${idx}, 현재 씬: ${isCurrentScene})`);
+              upgradeScene(idx, {
+                source: level1Source,
+                geometry,
+                view,
+                currentLevel: 1,
+                levelLabel: '1 (중해상도)',
+                onComplete: () => {
+                  // 3단계: 레벨 0 프리로드 및 교체 (레벨 1 업그레이드 완료 후 시작)
+                  const level0Img = new Image();
+                  level0Img.onload = function() {
+                    console.log(`[타일 로드] 📊 레벨 변경: 1 → 0 (고해상도) - 포인트 ${idx}`);
+                    console.log(`[타일 로드] 레벨 0 이미지 프리로드 완료: ${level0Url}`);
+                    // 씬 재생성 (현재 씬이어도 레벨 업그레이드 수행)
+                    if (marzipanoScenes[idx] && marzipanoScenes[idx].scene && marzipanoViewer) {
+                      try {
+                        // 현재 방향 유지
+                        const currentYaw2 = marzipanoScenes[idx].view.yaw();
+                        const currentPitch2 = marzipanoScenes[idx].view.pitch();
+                        const currentFov2 = marzipanoScenes[idx].view.fov();
+                        
+                        // 레벨 0 소스 생성
+                        const level0Source = Marzipano.ImageUrlSource.fromString(level0Url);
+                        const geometry2 = new Marzipano.EquirectGeometry([{ width: 1, height: 1 }]);
+                        const view2 = new Marzipano.RectilinearView({ 
+                          yaw: currentYaw2, 
+                          pitch: currentPitch2,
+                          fov: currentFov2
+                        });
+                        
+                        // 이벤트 리스너 재등록
+                        const totalOffset2 = getTotalOffset(idx);
+                        let rafId2 = null;
+                        view2.addEventListener('change', function () {
+                          if (rafId2 === null) {
+                            rafId2 = requestAnimationFrame(function() {
+                              rafId2 = null;
+                              renderRelativeNavArrows(idx, view2);
+                              const actualYaw = view2.yaw() * 180 / Math.PI;
+                              highlight(idx, actualYaw);
+                            });
+                          }
+                        });
+                        
+                        // 레벨 0 업그레이드
+                        upgradeScene(idx, {
+                          source: level0Source,
+                          geometry: geometry2,
+                          view: view2,
+                          currentLevel: 0,
+                          levelLabel: '0 (고해상도)'
+                        });
+                      } catch (e) {
+                        console.error(`[타일 로드] 레벨 0 교체 실패:`, e);
+                      }
+                    }
+                  };
+                  level0Img.onerror = function() {
+                    console.warn(`[타일 로드] 레벨 0 이미지 프리로드 실패: ${level0Url}`);
+                  };
+                  level0Img.src = level0Url;
+                }
+              });
+            } catch (e) {
+              console.error(`[타일 로드] 레벨 1 교체 실패:`, e);
+            }
+          }
+        }
+      };
+      level1Img.onerror = function() {
+        console.warn(`[타일 로드] 레벨 1 이미지 프리로드 실패: ${level1Url}`);
+      };
+      level1Img.src = level1Url;
+    } else {
+      // EquirectTiledImageSource가 없으면 타일 합성 이미지 사용 (점진적 로딩: 레벨 2 → 1 → 0)
+      const tileCompositeBaseUrl = tileBaseUrl.replace('/api/tile/', '/api/tile-composite/');
+      
+      // 1단계: 처음에는 저해상도(레벨 2)로 씬 생성
+      const level2Url = tileCompositeBaseUrl + '?level=2';
+      const level1Url = tileCompositeBaseUrl + '?level=1';
+      const level0Url = tileCompositeBaseUrl + '?level=0';
+      
+      console.log(`[타일 로드] 📊 현재 레벨: 2 (저해상도) - 포인트 ${idx}`);
+      console.log(`[타일 로드] 저해상도 이미지로 시작: ${level2Url}`);
+      source = Marzipano.ImageUrlSource.fromString(level2Url);
+      
+      // 2단계: 레벨 1 프리로드 및 교체
+      const level1Img = new Image();
+      level1Img.onload = function() {
+        console.log(`[타일 로드] 📊 레벨 변경: 2 → 1 (중해상도) - 포인트 ${idx}`);
+        console.log(`[타일 로드] 레벨 1 이미지 프리로드 완료: ${level1Url}`);
+        // 씬 재생성 (현재 씬이어도 레벨 업그레이드 수행)
+        if (marzipanoScenes[idx] && marzipanoScenes[idx].scene && marzipanoViewer) {
+          try {
+            // 현재 방향 유지
+            const currentYaw = marzipanoScenes[idx].view.yaw();
+            const currentPitch = marzipanoScenes[idx].view.pitch();
+            const currentFov = marzipanoScenes[idx].view.fov();
+            
+            // 레벨 1 소스 생성
+            const level1Source = Marzipano.ImageUrlSource.fromString(level1Url);
+            const geometry = new Marzipano.EquirectGeometry([{ width: 1, height: 1 }]);
+            const view = new Marzipano.RectilinearView({ 
+              yaw: currentYaw, 
+              pitch: currentPitch,
+              fov: currentFov
+            });
+            
+            // 이벤트 리스너 재등록
+            const totalOffset = getTotalOffset(idx);
+            let rafId = null;
+            view.addEventListener('change', function () {
+              if (rafId === null) {
+                rafId = requestAnimationFrame(function() {
+                  rafId = null;
+                  renderRelativeNavArrows(idx, view);
+                  const actualYaw = view.yaw() * 180 / Math.PI;
+                  highlight(idx, actualYaw);
+                });
+              }
+            });
+            
+            // 레벨 1 업그레이드
+            upgradeScene(idx, {
+              source: level1Source,
+              geometry,
+              view,
+              currentLevel: 1,
+              levelLabel: '1 (중해상도)',
+              onComplete: () => {
+                // 3단계: 레벨 0 프리로드 및 교체 (레벨 1 업그레이드 완료 후 시작)
+                const level0Img = new Image();
+                level0Img.onload = function() {
+                  console.log(`[타일 로드] 📊 레벨 변경: 1 → 0 (고해상도) - 포인트 ${idx}`);
+                  console.log(`[타일 로드] 레벨 0 이미지 프리로드 완료: ${level0Url}`);
+                  // 씬 재생성 (현재 씬이어도 레벨 업그레이드 수행)
+                  if (marzipanoScenes[idx] && marzipanoScenes[idx].scene && marzipanoViewer) {
+                    try {
+                      // 현재 방향 유지
+                      const currentYaw2 = marzipanoScenes[idx].view.yaw();
+                      const currentPitch2 = marzipanoScenes[idx].view.pitch();
+                      const currentFov2 = marzipanoScenes[idx].view.fov();
+                      
+                      // 레벨 0 소스 생성
+                      const level0Source = Marzipano.ImageUrlSource.fromString(level0Url);
+                      const geometry2 = new Marzipano.EquirectGeometry([{ width: 1, height: 1 }]);
+                      const view2 = new Marzipano.RectilinearView({ 
+                        yaw: currentYaw2, 
+                        pitch: currentPitch2,
+                        fov: currentFov2
+                      });
+                      
+                      // 이벤트 리스너 재등록
+                      const totalOffset2 = getTotalOffset(idx);
+                      let rafId2 = null;
+                      view2.addEventListener('change', function () {
+                        if (rafId2 === null) {
+                          rafId2 = requestAnimationFrame(function() {
+                            rafId2 = null;
+                            renderRelativeNavArrows(idx, view2);
+                            const actualYaw = view2.yaw() * 180 / Math.PI;
+                            highlight(idx, actualYaw);
+                          });
+                        }
+                      });
+                      
+                      // 레벨 0 업그레이드
+                      upgradeScene(idx, {
+                        source: level0Source,
+                        geometry: geometry2,
+                        view: view2,
+                        currentLevel: 0,
+                        levelLabel: '0 (고해상도)'
+                      });
+                    } catch (e) {
+                      console.error(`[타일 로드] 레벨 0 교체 실패:`, e);
+                    }
+                  }
+                };
+                level0Img.onerror = function() {
+                  console.warn(`[타일 로드] 레벨 0 이미지 프리로드 실패: ${level0Url}`);
+                };
+                level0Img.src = level0Url;
+              }
+            });
+          } catch (e) {
+            console.error(`[타일 로드] 레벨 1 교체 실패:`, e);
+        }
+      }
+    };
+    level1Img.onerror = function() {
+      console.warn(`[타일 로드] 레벨 1 이미지 프리로드 실패: ${level1Url}`);
+    };
+    level1Img.src = level1Url;
+    }  // if (TiledImageSource) else 블록 끝
+  } else {  // if (tileBaseUrl && ...) else 블록
+      // 원본 이미지 사용
+    if (!tileBaseUrl || tileBaseUrl.trim() === '') {
+      console.warn(`[타일 로드] ⚠️ tile_base_url이 비어있음, 원본 이미지 사용: ${img}`);
+    } else {
+      console.warn(`[타일 로드] ⚠️ 타일 없음, 원본 이미지 사용: ${img}`);
+    }
+      source = Marzipano.ImageUrlSource.fromString(img);
+    }
+    
+  // EquirectTiledImageSource를 사용할 때는 geometry에 타일 크기 정보가 필요할 수 있음
+  // 타일 크기는 256x256이므로, 타일 수를 계산하여 전체 이미지 크기 추정
+  // 하지만 Marzipano는 자동으로 타일 크기를 감지하므로 기본값 사용
+  // EquirectTiledImageSource를 사용할 때는 geometry를 자동 감지 모드로 설정
+    let geometry = new Marzipano.EquirectGeometry([{ width: 1, height: 1 }]);
+  const totalOffset = getTotalOffset(idx);
+  
+    // 이전 절대 방향을 유지하거나, 처음 로드할 때만 주행각도에 맞춤
+    let initialYaw;
+    if (hadPrevView) {
+      // 이전 방향을 유지 (미니맵에서 변경된 방향 포함, 본네트 각도는 고정)
+      initialYaw = prevYaw;
+    } else {
+      // 처음 로드할 때만 주행각도에 맞춤
+      initialYaw = -totalOffset * Math.PI / 180;
+    }
+
+    let view = new Marzipano.RectilinearView({ yaw: initialYaw, pitch: prevPitch });
+    const initialFov = view.fov();
+    // 최적화: requestAnimationFrame을 사용한 throttle로 성능 개선
+    let rafId = null;
+    view.addEventListener('change', function () {
+      if (rafId === null) {
+        rafId = requestAnimationFrame(function() {
+          rafId = null;
+          renderRelativeNavArrows(idx, view);
+          const actualYaw = view.yaw() * 180 / Math.PI;
+          // actualYaw는 원본 각도이므로 오프셋을 더하지 않음
+          // highlight 함수 내에서 getTotalOffset()으로 오프셋을 계산함
+          highlight(idx, actualYaw);
+        });
+      }
+    });
+    // 씬 생성 시 초기 레벨 정보 저장
+    let initialLevel = null;
+    if (tileBaseUrl && tileBaseUrl.trim() !== '') {
+      if (source && source.constructor.name === 'EquirectTiledImageSource') {
+        initialLevel = 'tile-source'; // 타일 소스 사용 (레벨 자동 관리)
+        console.log(`[타일 로드] 📊 현재 레벨: 타일 소스 사용 (자동 레벨 관리) - 포인트 ${idx}`);
+      } else {
+        initialLevel = 2; // 타일 합성 이미지의 경우 레벨 2로 시작
+      }
+    }
+    
+    marzipanoScenes[idx] = { 
+      scene: marzipanoViewer.createScene({ source, geometry, view }), 
+      view, 
+      initialFov,
+      currentLevel: initialLevel
+    };
+  
+  // 타일 소스를 사용한 경우, 타일 요청이 발생하는지 확인
+  if (tileBaseUrl && tileBaseUrl.trim() !== '' && source && source.constructor.name === 'EquirectTiledImageSource') {
+    console.log(`[타일 로드] 씬 생성 완료 - 타일 소스 사용 중. 타일 요청은 Marzipano가 자동으로 수행합니다.`);
+    console.log(`[타일 로드] Network 탭에서 /api/tile/... 요청이 나타나는지 확인하세요.`);
+  } else if (initialLevel === 2) {
+    console.log(`[타일 로드] 📊 현재 표시 중인 레벨: 2 (저해상도) - 포인트 ${idx}`);
+  }
+  
+  return true;
+}
+
+// 다음/이전 씬을 미리 생성하는 함수 (성능 개선)
+function preloadScenes(currentIdx) {
+  if (!marzipanoViewer || !points || points.length === 0) return;
+  
+  // requestIdleCallback이 있으면 사용, 없으면 setTimeout 사용
+  const schedulePreload = (callback) => {
+    if (window.requestIdleCallback) {
+      requestIdleCallback(callback, { timeout: 2000 });
+  } else {
+      setTimeout(callback, 100);
+    }
+  };
+  
+  // 다음 씬 미리 생성
+  const nextIdx = currentIdx + 1;
+  if (nextIdx < points.length && points[nextIdx] && points[nextIdx].image && !marzipanoScenes[nextIdx]) {
+    schedulePreload(() => {
+      if (!marzipanoScenes[nextIdx] && points[nextIdx] && points[nextIdx].image) {
+        const prevYaw = marzipanoScenes[currentIdx] ? marzipanoScenes[currentIdx].view.yaw() : 0;
+        const prevPitch = marzipanoScenes[currentIdx] ? marzipanoScenes[currentIdx].view.pitch() : 0;
+        createSceneForIndex(nextIdx, prevYaw, prevPitch, true);
+      }
+    });
+  }
+  
+  // 이전 씬 미리 생성
+  const prevIdx = currentIdx - 1;
+  if (prevIdx >= 0 && points[prevIdx] && points[prevIdx].image && !marzipanoScenes[prevIdx]) {
+    schedulePreload(() => {
+      if (!marzipanoScenes[prevIdx] && points[prevIdx] && points[prevIdx].image) {
+        const prevYaw = marzipanoScenes[currentIdx] ? marzipanoScenes[currentIdx].view.yaw() : 0;
+        const prevPitch = marzipanoScenes[currentIdx] ? marzipanoScenes[currentIdx].view.pitch() : 0;
+        createSceneForIndex(prevIdx, prevYaw, prevPitch, true);
+      }
+    });
+  }
+}
+
+async function showImage(idx) {
+  // Marzipano 라이브러리 확인
+  if (typeof Marzipano === 'undefined') {
+    console.error('Marzipano 라이브러리가 로드되지 않았습니다.');
+    alert('Marzipano 라이브러리 로드 실패: 페이지를 새로고침해주세요.');
+    return;
+  }
+  
+  if (!points[idx] || !points[idx].image) {
+    console.warn('GOTO_NODE: 대상 노드에 이미지가 없습니다:', points[idx].track_seg_point_id);
+
+    // 부모 창에 노드를 찾지 못했다는 메시지 전송
+    try {
+      window.parent?.postMessage(
+        { type: 'NODE_NOT_FOUND', payload: { track_seg_point_id: points[idx].track_seg_point_id } },
+        '*'
+      );
+    } catch (err) {
+      console.error('NODE_NOT_FOUND 메시지 전송 실패:', err);
+    }
+    return;
+  }
+  let prevYaw = 0, prevPitch = 0;
+  const hadPrevView = !!marzipanoScenes[currentIndex];
+  if (hadPrevView) {
+    // 현재 노드에서 바라보던 방향 (미니맵 드래그로 변경된 방향 포함)
+    prevYaw = marzipanoScenes[currentIndex].view.yaw();
+    prevPitch = marzipanoScenes[currentIndex].view.pitch();
+  }
+  currentIndex = idx;
+  
+  // 날짜 업데이트
+  updateLocationInfo(idx);
+
+  if (!marzipanoViewer) {
+    marzipanoViewer = new Marzipano.Viewer(document.getElementById('viewerContainer'));
+  }
+
+  // 씬 생성 또는 재사용
+  const sceneCreated = createSceneForIndex(idx, prevYaw, prevPitch, hadPrevView);
+  
+  if (!sceneCreated) {
+    console.error(`[타일 로드] 씬 생성 실패: 포인트 ${idx}`);
+    return;
+  }
+  
+  if (!marzipanoScenes[idx] || !marzipanoScenes[idx].scene) {
+    console.error(`[타일 로드] 씬이 생성되지 않음: 포인트 ${idx}`);
+    return;
+  }
+
+  // 씬 전환을 빠르게 처리 (속도 개선)
+  // 업그레이드 중이면 짧은 대기, 아니면 즉시 전환
+  const trySwitchTo = () => {
+    if (sceneUpgradeState[idx] && sceneUpgradeState[idx] !== false) {
+      // 업그레이드 중이면 50ms 후 재시도 (100ms -> 50ms로 단축)
+      setTimeout(trySwitchTo, 50);
+      return;
+    }
+    
+    // requestAnimationFrame을 한 번만 사용 (속도 개선)
+    requestAnimationFrame(() => {
+      try {
+        if (marzipanoScenes[idx] && marzipanoScenes[idx].scene) {
+          marzipanoScenes[idx].scene.switchTo();
+        }
+      } catch (e) {
+        // switchTo 실패 시 즉시 재시도 (200ms -> 50ms로 단축)
+        setTimeout(() => {
+          try {
+            if (marzipanoScenes[idx] && marzipanoScenes[idx].scene && (!sceneUpgradeState[idx] || sceneUpgradeState[idx] === false)) {
+              marzipanoScenes[idx].scene.switchTo();
+            }
+          } catch (e2) {
+            // 재시도 실패는 무시
+          }
+        }, 50);
+      }
+    });
+  };
+  
+  // 씬이 이미 존재하면 즉시 전환 시도
+  if (marzipanoScenes[idx] && marzipanoScenes[idx].scene && (!sceneUpgradeState[idx] || sceneUpgradeState[idx] === false)) {
+    try {
+      marzipanoScenes[idx].scene.switchTo();
+    } catch (e) {
+      // 실패하면 일반 경로로
+      trySwitchTo();
+    }
+  } else {
+    trySwitchTo();
+  }
+  
+  // 현재 레벨 정보 표시
+  if (marzipanoScenes[idx] && marzipanoScenes[idx].currentLevel !== undefined) {
+    const level = marzipanoScenes[idx].currentLevel;
+    if (level === 'tile-source') {
+      console.log(`[타일 로드] 📊 현재 표시 중인 레벨: 타일 소스 사용 (자동 레벨 관리) - 포인트 ${idx}`);
+    } else if (level === 0) {
+      console.log(`[타일 로드] 📊 현재 표시 중인 레벨: 0 (고해상도) - 포인트 ${idx}`);
+    } else if (level === 1) {
+      console.log(`[타일 로드] 📊 현재 표시 중인 레벨: 1 (중해상도) - 포인트 ${idx}`);
+    } else if (level === 2) {
+      console.log(`[타일 로드] 📊 현재 표시 중인 레벨: 2 (저해상도) - 포인트 ${idx}`);
+    } else {
+      console.log(`[타일 로드] 📊 현재 표시 중인 레벨: ${level} - 포인트 ${idx}`);
+    }
+  }
+  
+  // 씬 전환 후에도 이전 절대 방향 유지 보장 (미니맵에서 변경된 방향 포함)
+  if (hadPrevView && marzipanoScenes[idx].view) {
+    marzipanoScenes[idx].view.setYaw(prevYaw);
+    marzipanoScenes[idx].view.setPitch(prevPitch);
+  }
+  
+  if (currentMapType === 'leaflet') {
+    miniMap.setView([points[idx].lat, points[idx].lon]);
+  }
+  // 카카오맵 API 주석 처리 - Leaflet만 사용
+  /*
+  else if (currentMapType === 'kakao' && kakaoMap) {
+    kakaoMap.setCenter(new kakao.maps.LatLng(points[idx].lat, points[idx].lon));
+  }
+  */
+
+  // 주소창 동기화
+  try {
+    const id = (points[idx].track_seg_point_id || '').toString().trim() || `node_${idx}`;
+    const url = `${location.origin}${window.SCRIPT_ROOT}/${encodeURIComponent(id)}`;
+      // 현재 노드 id를 쿠키에 저장해 서버에서 조회 가능하도록 유지 (루트 경로)
+      try { document.cookie = `current_node_id=${encodeURIComponent(id)}; path=/`; } catch (e) {}
+      
+      const PREFIX = (window.SCRIPT_ROOT || '');
+      // /pano/admin 페이지인 경우 노드 ID를 URL에 표시 (/pano/... 형식)
+      if (window.location.pathname.startsWith('/pano/admin')) {
+        history.replaceState({ idx, id }, '', PREFIX + `/pano/${encodeURIComponent(id)}`);
+      } else {
+        // 일반 페이지는 루트만 표시
+        history.replaceState({ idx, id }, '', PREFIX + '/');
+      }
+ 
+      document.title = `360° 파노라마 맵뷰어`;
+  } catch (e) {
+    console.warn('URL 갱신 실패:', e);
+  }
+
+  // 현재 노드 정보 저장
+  window.__currentNodeInfo = {
+    idx,
+    id: (points[idx].track_seg_point_id || '').toString().trim() || `node_${idx}`,
+    lat: points[idx].lat,
+    lon: points[idx].lon
+  };
+
+  requestAnimationFrame(() => {
+    renderRelativeNavArrows(idx, marzipanoScenes[idx].view);
+    // 이전 방향을 유지하므로 현재 yaw 값을 그대로 사용
+    let yaw = marzipanoScenes[idx].view.yaw ? marzipanoScenes[idx].view.yaw() : 0;
+    const actualYaw = yaw * 180 / Math.PI;
+    highlight(idx, actualYaw);
+    updateNorthOffsetInputStyle();
+    
+    // 씬 전환 완료 후 다음/이전 씬 미리 생성 (성능 개선)
+    preloadScenes(idx);
+  });
+}
+
+// 뒤로/앞으로 탐색 처리
+window.addEventListener('popstate', function(e) {
+  const state = e.state;
+  if (state && typeof state.idx === 'number') {
+    showImage(state.idx);
+  } else {
+    // 상태가 없으면 현재 URL에서 id를 파싱해 매칭 시도
+    const parts = location.pathname.split('/').filter(Boolean);
+    const id = parts.length ? decodeURIComponent(parts[parts.length - 1]) : '';
+    if (id && Array.isArray(points) && points.length) {
+      const found = points.findIndex(p => (p.track_seg_point_id || '').toString().trim() === id);
+      if (found >= 0) showImage(found);
+    }
+  }
+});
+
+function gotoNodeByInfo(info) {
+  if (!info) return;
+
+  const doMove = () => {
+    // track_seg_point_id로 idx 찾기
+    const id = String(info.track_seg_point_id ?? '').trim();
+    let idx = points.findIndex(p => String(p.track_seg_point_id ?? '').trim() === id);
+
+    if (idx < 0 || idx >= points.length) {
+      console.warn('GOTO_NODE: 대상 노드를 찾지 못했습니다:', info);
+
+      // 부모 창에 노드를 찾지 못했다는 메시지 전송
+      try {
+        window.parent?.postMessage(
+          { type: 'NODE_NOT_FOUND', payload: { track_seg_point_id: id } },
+          '*'
+        );
+      } catch (err) {
+        console.error('NODE_NOT_FOUND 메시지 전송 실패:', err);
+      }
+
+      return;
+    }
+
+    // 실제 이동
+    showImage(idx);
+
+    const nodeId = String(points[idx]?.track_seg_point_id ?? `node_${idx}`);
+    requestAnimationFrame(() => {
+      requestAnimationFrame(() => {
+        window.parent?.postMessage(
+          { type: 'NODE_SHOWN', payload: { track_seg_point_id: nodeId, idx } },
+          '*' 
+        );
+      });
+    });
+
+    // 주소창 업데이트 (/pano/admin 페이지에서만 노드 ID 표시)
+    try {
+      const nodeId = points[idx]?.track_seg_point_id ?? `node_${idx}`;
+      
+      const PREFIX = (window.SCRIPT_ROOT || '');
+      // /pano/admin 페이지인 경우 노드 ID를 URL에 표시 (/pano/... 형식)
+      if (window.location.pathname.startsWith('/pano/admin')) {
+        history.replaceState({ idx, id: nodeId }, '', PREFIX + `/pano/${encodeURIComponent(nodeId)}`);
+      } else {
+        // 일반 페이지는 루트만 표시
+        history.replaceState({ idx, id: nodeId }, '', PREFIX + '/');
+      }
+
+      document.title = '360° 파노라마 맵뷰어';
+    } catch (_) {}
+
+    // 미니맵 하이라이트 보정
+    if (typeof highlight === 'function') {
+      const angle = points[idx]?.angle ?? 0;
+      setTimeout(() => highlight(idx, angle), 300);
+    }
+  };
+
+  // 데이터셋 아직이면 로드 완료 후 실행
+  if (!Array.isArray(points) || points.length === 0) {
+    registerAfterDatasetLoaded(doMove);
+  } else {
+    doMove();
+  }
+}
+
+/* =========================
+  메뉴/컨텍스트 메뉴
+========================= */
+// 메뉴 이벤트 핸들러는 DOMContentLoaded에서 등록됨
+window.onclick = function(e){
+  if (!e.target.closest('.menu-item') && !e.target.closest('.dropdown-menu')) closeMenus();
+};
+function closeMenus() {
+  document.querySelectorAll('.dropdown-menu').forEach(menu=>menu.classList.remove('active'));
+}
+
+// North Offset 인풋 (메뉴 숨김 모드에서는 요소가 없을 수 있으므로 가드)
+const northOffsetInputEl = document.getElementById('northOffsetInput');
+if (northOffsetInputEl) northOffsetInputEl.addEventListener('input', function() {
+  const newVal = parseFloat(this.value)||0;
+  const delta = newVal - northOffset;
+  northOffset = newVal;
+  try { localStorage.setItem(NORTH_OFFSET_STORAGE_KEY, northOffset.toString()); } catch (e) {}
+  if (marzipanoScenes[currentIndex]) {
+    const view = marzipanoScenes[currentIndex].view;
+    renderRelativeNavArrows(currentIndex, view);
+    const yaw = view.yaw();
+    // totalOffset은 highlight 함수 내에서 getTotalOffset()으로 계산됨
+    highlight(currentIndex, yaw * 180 / Math.PI);
+    updateNorthOffsetInputStyle();
+  }
+});
+  
+const saveNorthOffsetBtnEl = document.getElementById('saveNorthOffsetBtn');
+if (saveNorthOffsetBtnEl) saveNorthOffsetBtnEl.addEventListener('click', async function() {
+  // 옵션 메뉴 닫기 (존재할 때만)
+  const menuOptionMenuEl1 = document.getElementById('menuOptionMenu');
+  if (menuOptionMenuEl1) menuOptionMenuEl1.classList.remove('active');
+  const northOffsetValue = parseFloat(document.getElementById('northOffsetInput').value) || 0;
+  
+  // North Offset을 현재 선택된 노드에만 적용하고 CSV에 저장
+  try {
+    const point = points[currentIndex];
+    if (point && point.dataset_name) {
+      const response = await fetch('/api/save-offset', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({
+          dataset_name: point.dataset_name,
+          image_index: currentIndex,
+          offset: northOffsetValue
+        })
+      });
+      
+      if (response.ok) {
+        const result = await response.json();
+        // console.log(`North Offset CSV 저장 성공: ${result.message}`);
+        
+        // points 배열의 csv_angle_add와 final_angle 업데이트
+        if (points[currentIndex]) {
+          const oldAngleAdd = points[currentIndex].csv_angle_add || 0;
+          points[currentIndex].csv_angle_add = northOffsetValue;  // 기존 값에 추가가 아닌 변경
+          points[currentIndex].final_angle = parseFloat(points[currentIndex].csv_angle) + points[currentIndex].csv_angle_add;
+          
+          // console.log(`현재 노드 ${currentIndex} North Offset 변경: csv_angle=${points[currentIndex].csv_angle}°, 기존angle_add=${oldAngleAdd}°, 새로운angle_add=${northOffsetValue}°, final_angle=${points[currentIndex].final_angle}°`);
+        }
+        
+        // North Offset 입력값 초기화
+        document.getElementById('northOffsetInput').value = '0';
+        
+        // 현재 이미지의 부채꼴 업데이트
+        if (marzipanoScenes[currentIndex]) {
+          const view = marzipanoScenes[currentIndex].view;
+          renderRelativeNavArrows(currentIndex, view);
+          const yaw = view.yaw();
+          highlight(currentIndex, yaw * 180 / Math.PI);
+          updateNorthOffsetInputStyle();
+        }
+        
+        renderMarkers();
+        alert(`North Offset ${northOffsetValue}°가 현재 노드(이미지 ${currentIndex + 1})에 적용되고 CSV에 저장되었습니다.`);
+        
+      } else {
+        console.error('North Offset CSV 저장 실패:', response.statusText);
+        alert('North Offset 저장에 실패했습니다.');
+      }
+    }
+  } catch (error) {
+    console.error('North Offset CSV 저장 중 오류:', error);
+    alert('North Offset 저장 중 오류가 발생했습니다.');
+  }
+});
+
+// Offset 에디터
+const editPerImageOffsetsBtnEl = document.getElementById('editPerImageOffsetsBtn');
+if (editPerImageOffsetsBtnEl) editPerImageOffsetsBtnEl.addEventListener('click', function() {
+  // 옵션 메뉴 닫기 (존재할 때만)
+  const menuOptionMenuEl2 = document.getElementById('menuOptionMenu');
+  if (menuOptionMenuEl2) menuOptionMenuEl2.classList.remove('active');
+  openOffsetEditor();
+});
+const clearOffsetsBtnEl = document.getElementById('clearOffsetsBtn');
+if (clearOffsetsBtnEl) clearOffsetsBtnEl.addEventListener('click', async function() {
+  // 옵션 메뉴 닫기
+  document.getElementById('menuOptionMenu').classList.remove('active');
+  if (confirm('정말로 모든 오프셋을 초기화하시겠습니까?\n\n이 작업은 되돌릴 수 없습니다.')) {
+    await clearLocalStorageOffsets();
+  }
+});
+
+document.getElementById('saveOffsetsBtn').addEventListener('click', async function() { await saveOffsets(); });
+document.getElementById('cancelOffsetsBtn').addEventListener('click', function() { closeOffsetEditor(); });
+document.getElementById('offsetEditorModal').addEventListener('click', function(e) { if (e.target === this) closeOffsetEditor(); });
+
+const showNumbersBtn = document.getElementById('showImageNumbersBtn');
+if (showNumbersBtn) showNumbersBtn.addEventListener('click', function() { enterNumberMode(); });
+
+function addReturnButtonControl() {
+  const ReturnControl = L.Control.extend({
+    options: { position: 'topright' },
+    onAdd: function (map) {
+      const btn = L.DomUtil.create('button', '');
+      btn.id = 'returnFromNumbersBtn';
+      btn.innerText = '돌아가기';
+      btn.style.cssText = 'display:none; padding:8px 12px; background:#f44336; color:#fff; border:none; border-radius:4px; cursor:pointer; font-size:0.9em;';
+      L.DomEvent.on(btn, 'click', function (e) {
+        L.DomEvent.stopPropagation(e);
+        exitNumberMode(true);
+      });
+      L.DomEvent.disableClickPropagation(btn);
+      return btn;
+    }
+  });
+  miniMap.addControl(new ReturnControl());
+  returnBtn = document.getElementById('returnFromNumbersBtn');
+}
+
+/* =========================
+  Offset Editor helpers
+========================= */
+function openOffsetEditor() {
+  const modal = document.getElementById('offsetEditorModal');
+  const list = document.getElementById('offsetEditorContent');
+  list.innerHTML = '';
+  points.forEach((point, index) => {
+    const offset = getPerImageOffset(index);
+    const csvAngle = point.csv_angle || 0;
+    const csvAngleAdd = point.csv_angle_add || 0;
+    const finalAngle = point.final_angle || csvAngle;
+    
+    const div = document.createElement('div');
+    div.style.cssText = 'display:flex; align-items:center; gap:8px; margin-bottom:10px; padding:12px; border:1px solid #ddd; border-radius:4px; background:#f9f9f9;';
+    const ds = point.dataset_name || point.datasetName || '';
+    const fn = point.image_filename || point.imageFile || '';
+    
+    div.innerHTML =
+      '<input type="checkbox" class="offset-select" data-index="' + index + '" style="margin-right:6px;">' +
+      '<div style="width:100px; font-weight:700; color:#333;">이미지 ' + (index + 1) + '</div>' +
+      '<div style="flex:1; font-size:0.85em; color:#666; overflow:hidden; text-overflow:ellipsis; white-space:nowrap;">' + ds + ' / ' + fn + '</div>' +
+      '<div style="display:flex; gap:8px; align-items:center;">' +
+        '<div style="text-align:center; min-width:60px;">' +
+          '<div style="font-size:0.75em; color:#888; margin-bottom:2px;">gpx 방향</div>' +
+          '<div style="font-size:0.9em; color:#333; font-weight:600;">' + csvAngle.toFixed(2) + '°</div>' +
+        '</div>' +
+        '<div style="text-align:center; min-width:60px;">' +
+          '<div style="font-size:0.75em; color:#888; margin-bottom:2px;">보정값</div>' +
+          '<div style="font-size:0.9em; color:#0066cc; font-weight:600;">' + csvAngleAdd.toFixed(2) + '°</div>' +
+        '</div>' +
+        '<div style="text-align:center; min-width:80px;">' +
+          '<div style="font-size:0.75em; color:#888; margin-bottom:2px;">오프셋</div>' +
+          '<input type="number" min="0" max="360" step="0.1" value=""' +
+              'style="width:70px; padding:4px; border:1px solid #ccc; border-radius:4px; font-size:0.8em;"' +
+              'data-index="' + index + '"><span style="color:#666; font-size:0.8em;">°</span>' +
+        '</div>' +
+      '</div>';
+    
+    list.appendChild(div);
+    const cb = div.querySelector('.offset-select');
+    if (cb && selectedIndices.has(index)) cb.checked = true;
+  });
+  modal.style.display = 'flex';
+  closeMenus();
+}
+
+async function saveOffsets() {
+  const inputs = document.querySelectorAll('#offsetEditorContent input[type="number"]');
+  const prevCurrentOffset = getPerImageOffset(currentIndex);
+  const angleAddValues = [];
+  const imageFilenames = [];
+  
+  // 모든 오프셋을 비동기로 저장하고 보정값과 CSV 갱신
+  for (const input of inputs) {
+    const index = parseInt(input.dataset.index);
+    const value = parseFloat(input.value) || 0;
+    const oldValue = getPerImageOffset(index);
+    if (oldValue !== value) {
+      // console.log(`이미지 ${index} 오프셋 변경: ${oldValue}° → ${value}°`);
+      await setPerImageOffset(index, value);
+      
+      // 보정값(angle_add)과 CSV 갱신
+      if (points[index]) {
+        points[index].csv_angle_add = value;
+        points[index].final_angle = parseFloat(points[index].csv_angle) + value;
+        // console.log(`이미지 ${index} 보정값 갱신: csv_angle_add=${value}°, final_angle=${points[index].final_angle}°`);
+        
+        // CSV 저장을 위한 데이터 수집
+        angleAddValues.push(value);
+        imageFilenames.push(points[index].image_filename || '');
+      }
+    }
+  }
+  
+  // CSV 파일에 저장
+  if (angleAddValues.length > 0 && points.length > 0) {
+    const datasetName = points[0].dataset_name;
+    if (datasetName) {
+      try {
+        const response = await fetch(`/api/save-angle-add/${datasetName}`, {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+          },
+          body: JSON.stringify({
+            angle_add_values: angleAddValues,
+            image_filenames: imageFilenames
+          })
+        });
+        
+        const result = await response.json();
+        if (response.ok) {
+          // console.log('angle_add 값이 CSV 파일에 저장되었습니다:', result.message);
+        } else {
+          console.error('angle_add 값 저장 실패:', result.error);
+        }
+      } catch (error) {
+        console.error('angle_add 값 저장 중 오류 발생:', error);
+      }
+    }
+  }
+  
+  if (marzipanoScenes[currentIndex]) {
+    const view = marzipanoScenes[currentIndex].view;
+    const newCurrentOffset = getPerImageOffset(currentIndex);
+    const delta = newCurrentOffset - prevCurrentOffset;
+    if (view && typeof view.yaw === 'function' && typeof view.setYaw === 'function' && delta) {
+      const oldYaw = view.yaw();
+      view.setYaw(oldYaw - (delta * Math.PI / 180));
+    }
+    renderRelativeNavArrows(currentIndex, view);
+    const yaw = view && typeof view.yaw === 'function' ? view.yaw() : 0;
+    // totalOffset은 highlight 함수 내에서 getTotalOffset()으로 계산됨
+    highlight(currentIndex, yaw * 180 / Math.PI);
+    updateNorthOffsetInputStyle();
+  }
+  selectedIndices.clear();
+  renderMarkers();
+  closeOffsetEditor();
+}
+
+function closeOffsetEditor() {
+  document.getElementById('offsetEditorModal').style.display = 'none';
+}
+
+/* =========================
+  지도 전환 (Leaflet/Kakao)
+========================= */
+function switchToLeaflet() {
+  if (currentMapType === 'leaflet') return;
+
+  // 카카오맵 API 주석 처리 - Leaflet만 사용
+  /*
+  // 카카오맵 완전 제거
+  if (kakaoMap) { 
+    kakaoMap = null; 
+  }
+  
+  // 카카오맵 관련 요소들 제거
+  const container = document.getElementById('miniMap');
+  if (container) {
+    // 카카오맵에서 생성한 확대/축소 컨트롤 제거
+    const kakaoZoomControl = container.querySelector('#kakao-zoom-control');
+    if (kakaoZoomControl) {
+      kakaoZoomControl.remove();
+    }
+    
+    // 카카오맵 관련 오버레이들 제거
+    if (window.kakaoTrackPolyline) {
+      window.kakaoTrackPolyline.setMap(null);
+      window.kakaoTrackPolyline = null;
+    }
+    if (window.kakaoMarkers) {
+      window.kakaoMarkers.forEach(marker => marker.setMap(null));
+      window.kakaoMarkers = [];
+    }
+  }
+  */
+
+  const center = points.length ? [points[0].lat, points[0].lon] : [37.5665, 126.9780];
+  miniMap = L.map('miniMap', { center: center, zoom: 17, zoomControl: true, attributionControl: true });
+  L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', { maxZoom: 19 }).addTo(miniMap);
+  miniMap.zoomControl.setPosition('topleft');
+
+  // ✅ Viewport 기반 포인트 fetch 핸들러 연결
+  pointsLayer = null;        // (중요) 이전 맵 인스턴스의 layerGroup 끊기
+  lastFetchKey = "";
+  if (mapFetchAbort) mapFetchAbort.abort();
+  mapFetchAbort = null;
+  attachMapFetchHandlers();
+  
+  // Leaflet 확대/축소 컨트롤 크기 조정
+  const leafletZoomControl = document.querySelector('.leaflet-control-zoom');
+  if (leafletZoomControl) {
+    leafletZoomControl.style.transform = 'scale(1.0)';
+  }
+
+  addReturnButtonControl();
+
+  // 우클릭 메뉴 제거됨
+
+  currentMapType = 'leaflet';
+  console.log('Leaflet 지도로 전환됨');
+
+  if (points.length) {
+    renderMarkers();
+    // 첫 번째 노드를 중심으로 적절히 확대된 상태로 설정
+    const firstPoint = points[0];
+    if (firstPoint) {
+      miniMap.setView([firstPoint.lat, firstPoint.lon], 17);
+    }
+  }
+}
+
+// 카카오맵 API 주석 처리 - Leaflet만 사용
+/*
+async function switchToKakao() {
+  if (currentMapType === 'kakao') return;
+
+  // Leaflet 제거 (GPX 데이터는 유지)
+  if (miniMap) { 
+    miniMap.remove(); 
+    miniMap = null; 
+  }
+
+  try {
+    await loadKakaoMapAPI();   // ✅ SDK 준비 보장
+    createKakaoMap();
+    currentMapType = 'kakao';
+    // console.log('카카오맵으로 전환됨');
+    
+    // GPX 데이터가 있는지 확인하고 로그
+    if (points && points.length > 0) {
+      // console.log(`카카오맵 전환 후 GPX 데이터 유지: ${points.length}개 포인트`);
+    } else {
+      console.warn('카카오맵 전환 후 GPX 데이터가 없습니다!');
+    }
+  } catch (error) {
+    console.error('카카오맵 API 로드 실패:', error);
+    alert('카카오맵 API를 불러올 수 없습니다: ' + error.message);
+    switchToLeaflet();
+  }
+}
+*/
+
+// 카카오맵 API 주석 처리 - Leaflet만 사용
+/*
+function createKakaoMap() {
+  const container = document.getElementById('miniMap');
+  const center = points.length
+    ? new kakao.maps.LatLng(points[0].lat, points[0].lon)
+    : new kakao.maps.LatLng(37.5665, 126.9780);
+  const options = { 
+    center, 
+    level: 3,
+    zoomControl: true, // 확대/축소 컨트롤 활성화
+    zoomControlOptions: {
+      position: kakao.maps.ControlPosition.TOPLEFT // 좌상단에 위치
+    }
+  };
+
+  kakaoMap = new kakao.maps.Map(container, options);
+
+  // 우클릭 메뉴 (page 좌표로 변환)
+  kakao.maps.event.addListener(kakaoMap, 'rightclick', function(mouseEvent) {
+    const rect = container.getBoundingClientRect();
+    const pageX = rect.left + window.scrollX + mouseEvent.point.x;
+    const pageY = rect.top + window.scrollY + mouseEvent.point.y;
+    showMapContextMenu({
+      pageX, pageY,
+      preventDefault: ()=>{}
+    });
+  });
+
+  // 카카오맵 전용 확대/축소 컨트롤 생성 (다른 요소에 영향 없도록 격리)
+  const zoomControl = document.createElement('div');
+  zoomControl.id = 'kakao-zoom-control';
+  zoomControl.style.cssText = `
+    position: absolute;
+    top: 10px;
+    left: 10px;
+    z-index: 1000;
+    font-family: Arial, sans-serif;
+    pointer-events: auto;
+  `;
+  
+  const zoomInBtn = document.createElement('a');
+  zoomInBtn.innerHTML = '+';
+  zoomInBtn.href = '#';
+  zoomInBtn.style.cssText = `
+    width: 32px;
+    height: 32px;
+    line-height: 32px;
+    text-align: center;
+    text-decoration: none;
+    color: #000;
+    font-size: 24px;
+    font-weight: bold;
+    background: #fff;
+    border: 2px solid rgba(0,0,0,0.2);
+    border-bottom: none;
+    border-radius: 4px 4px 0 0;
+    cursor: pointer;
+    display: block;
+    box-sizing: border-box;
+    user-select: none;
+  `;
+  zoomInBtn.onclick = (e) => {
+    e.preventDefault();
+    e.stopPropagation();
+    kakaoMap.setLevel(kakaoMap.getLevel() - 1);
+  };
+  
+  const zoomOutBtn = document.createElement('a');
+  zoomOutBtn.innerHTML = '−';
+  zoomOutBtn.href = '#';
+  zoomOutBtn.style.cssText = `
+    width: 32px;
+    height: 32px;
+    line-height: 32px;
+    text-align: center;
+    text-decoration: none;
+    color: #000;
+    font-size: 24px;
+    font-weight: bold;
+    background: #fff;
+    border: 2px solid rgba(0,0,0,0.2);
+    border-radius: 0 0 4px 4px;
+    cursor: pointer;
+    display: block;
+    box-sizing: border-box;
+    user-select: none;
+  `;
+  zoomOutBtn.onclick = (e) => {
+    e.preventDefault();
+    e.stopPropagation();
+    kakaoMap.setLevel(kakaoMap.getLevel() + 1);
+  };
+  
+  zoomControl.appendChild(zoomInBtn);
+  zoomControl.appendChild(zoomOutBtn);
+  container.appendChild(zoomControl);
+
+  // 카카오맵 API 기본 마크는 좌측하단에 고정되어 있어서 별도로 이동할 수 없음
+  // 우리가 만든 마크는 제거하고 기본 마크만 사용
+
+  if (points.length) {
+    renderKakaoMarkers();
+    const bounds = new kakao.maps.LatLngBounds();
+    // 이미지와 매칭된 포인트만으로 bounds 설정
+    const matchedPoints = points.filter(p => p.image && p.image.trim() !== '');
+    if (matchedPoints.length > 0) {
+      matchedPoints.forEach(p => bounds.extend(new kakao.maps.LatLng(p.lat, p.lon)));
+    } else {
+      // 매칭된 포인트가 없으면 모든 포인트로 설정
+      points.forEach(p => bounds.extend(new kakao.maps.LatLng(p.lat, p.lon)));
+    }
+    kakaoMap.setBounds(bounds);
+  }
+}
+*/
+
+// 카카오맵 API 주석 처리 - Leaflet만 사용
+/*
+// 카카오맵용 마커 렌더링
+function renderKakaoMarkers() {
+  if (currentMapType !== 'kakao' || !kakaoMap) return;
+
+  // 기존 마커와 선분 제거
+  if (window.kakaoMarkers) window.kakaoMarkers.forEach(marker => marker.setMap(null));
+  if (window.kakaoTrackPolyline) window.kakaoTrackPolyline.setMap(null);
+  window.kakaoMarkers = [];
+  window.kakaoTrackPolyline = null;
+
+  // Track 선분 그리기 (파란색, 두껍게, 약간 투명하게)
+  if (points.length > 1) {
+    const trackCoords = points.map(pt => new kakao.maps.LatLng(pt.lat, pt.lon));
+    window.kakaoTrackPolyline = new kakao.maps.Polyline({
+      path: trackCoords,
+      strokeColor: '#1976d2',
+      strokeWeight: 6,
+      strokeOpacity: 0.7,
+      strokeStyle: kakao.maps.StrokeStyle.SOLID,
+      zIndex: 1000 // 높은 z-index로 최상단에 표시
+    });
+    window.kakaoTrackPolyline.setMap(kakaoMap);
+    
+    // Track 선분 클릭 이벤트: 클릭한 위치에서 가장 가까운 노드로 이동
+    kakao.maps.event.addListener(window.kakaoTrackPolyline, 'click', function(mouseEvent) {
+      const clickedLatLng = mouseEvent.latLng;
+      let closestIndex = 0;
+      let minDistance = Infinity;
+      
+      points.forEach((pt, i) => {
+        const distance = kakao.maps.geometry.distance(clickedLatLng, new kakao.maps.LatLng(pt.lat, pt.lon));
+        if (distance < minDistance) {
+          minDistance = distance;
+          closestIndex = i;
+        }
+      });
+      
+      // console.log(`카카오맵 Track 선분 클릭: ${closestIndex}번 노드로 이동 (거리: ${minDistance.toFixed(1)}m)`);
+      window.__gotoPoint(closestIndex);
+    });
+  }
+
+  // 이미지와 매칭된 포인트만 필터링 - 최적화: 인덱스 정보도 함께 저장 (O(n²) → O(n))
+  const matchedPoints = [];
+  points.forEach((pt, idx) => {
+    if (pt.image && pt.image.trim() !== '') {
+      matchedPoints.push({ point: pt, index: idx });
+    }
+  });
+
+  // 투명한 원형 마커 생성 (클릭 가능하도록 약간 투명)
+  matchedPoints.forEach(({ point: pt, index: originalIndex }) => {
+    try {
+      // 투명한 원형 오버레이 생성 (클릭 가능하도록 약간 투명)
+      const circle = new kakao.maps.Circle({
+        center: new kakao.maps.LatLng(pt.lat, pt.lon),
+        radius: 16, // 기본 크기
+        fillColor: '#1976d2',
+        fillOpacity: 0.1, // 약간 투명 (클릭 가능하도록)
+        strokeColor: '#1976d2',
+        strokeWeight: 1, // 얇은 테두리
+        strokeOpacity: 0.3, // 약간 투명한 테두리
+        zIndex: 500 // track보다 낮은 z-index
+      });
+      circle.setMap(kakaoMap);
+      
+      // 클릭 이벤트 추가
+      kakao.maps.event.addListener(circle, 'click', function() { 
+        // console.log(`카카오맵 마커 클릭: ${originalIndex}번 노드로 이동`);
+        window.__gotoPoint(originalIndex); 
+      });
+      
+      window.kakaoMarkers.push(circle);
+    } catch (error) {
+      console.error(`카카오맵 마커 ${originalIndex} 생성 실패:`, error);
+    }
+  });
+}
+*/
+
+/* =========================
+  컨텍스트 메뉴 - 제거됨
+========================= */
+// 지도 선택 컨텍스트 메뉴 기능 제거
+
+/* =========================
+  단축/줌/번호 선택 등
+========================= */
+document.getElementById('selectAllOffsets').addEventListener('change', function() {
+  const checked = this.checked;
+  document.querySelectorAll('#offsetEditorContent .offset-select').forEach(cb => { cb.checked = checked; });
+});
+
+document.getElementById('applyBulkOffsetBtn').addEventListener('click', function() {
+  const bulkInput = document.getElementById('bulkOffsetInput');
+  const val = parseFloat(bulkInput.value);
+  const bulkVal = Number.isFinite(val) ? Math.min(360, Math.max(0, val)) : 0;
+  document.querySelectorAll('#offsetEditorContent .offset-select:checked').forEach(cb => {
+    const row = cb.closest('div'); if (!row) return;
+    const numInput = row.querySelector('input[type="number"]');
+    if (numInput) numInput.value = bulkVal;
+  });
+});
+
+document.getElementById('bulkOffsetInput').addEventListener('keydown', function(e){
+  if (e.key === 'Enter') document.getElementById('applyBulkOffsetBtn').click();
+});
+
+const zoomInBtn = document.getElementById('zoomInBtn');
+if (zoomInBtn) {
+  zoomInBtn.addEventListener('click', function() {
+    if (marzipanoScenes[currentIndex] && marzipanoScenes[currentIndex].view) {
+      const view = marzipanoScenes[currentIndex].view;
+      const currentFov = view.fov();
+      view.setFov(currentFov * 0.8);
+    }
+  });
+}
+
+const zoomOutBtn = document.getElementById('zoomOutBtn');
+if (zoomOutBtn) {
+  zoomOutBtn.addEventListener('click', function() {
+    if (marzipanoScenes[currentIndex] && marzipanoScenes[currentIndex].view) {
+      const view = marzipanoScenes[currentIndex].view;
+      const currentFov = view.fov();
+      const initialFov = marzipanoScenes[currentIndex].initialFov;
+      let newFov = currentFov * 1.25;
+      if (initialFov) newFov = Math.min(newFov, initialFov);
+      view.setFov(newFov);
+    }
+  });
+}
+
+// 번호 모드
+function enterNumberMode() {
+  showImageNumbers = true;
+  const mm = document.getElementById('miniMap');
+  try {
+    const cs = window.getComputedStyle(mm);
+    prevMiniMapSize = { width: parseInt(cs.width) || 300, height: parseInt(cs.height) || 300 };
+  } catch (e) {}
+  mm.style.width = '700px';
+  mm.style.height = '700px';
+  if (miniMap) setTimeout(()=> miniMap.invalidateSize(), 0);
+  attachSelectionHandlers();
+  renderMarkers();
+  if (returnBtn) returnBtn.style.display = 'block';
+  closeOffsetEditor();
+}
+function exitNumberMode(goBackToEditor) {
+  showImageNumbers = false;
+  const mm = document.getElementById('miniMap');
+  mm.style.width = prevMiniMapSize.width + 'px';
+  mm.style.height = prevMiniMapSize.height + 'px';
+  if (miniMap) setTimeout(()=> miniMap.invalidateSize(), 0);
+  detachSelectionHandlers();
+  removeSelectionRect();
+  renderMarkers();
+  if (returnBtn) returnBtn.style.display = 'none';
+  if (goBackToEditor) openOffsetEditor();
+}
+
+function attachSelectionHandlers() {
+  if (!miniMap) return;
+  const container = miniMap.getContainer();
+  if (!container) return;
+  container.addEventListener('mousedown', onMiniMapMouseDown, true);
+  container.addEventListener('mousemove', onMiniMapMouseMove, true);
+  window.addEventListener('mouseup', onMiniMapMouseUp, true);
+}
+
+function detachSelectionHandlers() {
+  if (!miniMap) return;
+  const container = miniMap.getContainer();
+  if (!container) return;
+  container.removeEventListener('mousedown', onMiniMapMouseDown, true);
+  container.removeEventListener('mousemove', onMiniMapMouseMove, true);
+  window.removeEventListener('mouseup', onMiniMapMouseUp, true);
+}
+
+function onMiniMapMouseDown(e) {
+  if (!showImageNumbers) return;
+  if (e.button !== 0) return;
+  if (!(e.ctrlKey || e.metaKey)) return;
+  if (!miniMap) return;
+  const container = miniMap.getContainer();
+  if (!container) return;
+  if (miniMap.dragging) miniMap.dragging.disable();
+  e.preventDefault(); e.stopPropagation();
+  const rect = container.getBoundingClientRect();
+  selectionStartPt = { x: e.clientX - rect.left, y: e.clientY - rect.top };
+}
+
+// 최적화: 마우스 이동 이벤트 throttle을 위한 변수
+let mouseMoveRafId = null;
+function onMiniMapMouseMove(e) {
+  if (!showImageNumbers || !selectionStartPt) return;
+  if (!miniMap) return;
+  e.preventDefault(); e.stopPropagation();
+  
+  // 최적화: requestAnimationFrame을 사용한 throttle
+  if (mouseMoveRafId === null) {
+    mouseMoveRafId = requestAnimationFrame(function() {
+      mouseMoveRafId = null;
+      if (!miniMap) return;
+      const container = miniMap.getContainer();
+      if (!container) return;
+      const rect = container.getBoundingClientRect();
+      const curr = { x: e.clientX - rect.left, y: e.clientY - rect.top };
+      drawSelectionRect(selectionStartPt, curr);
+      const x1 = Math.min(selectionStartPt.x, curr.x);
+      const y1 = Math.min(selectionStartPt.y, curr.y);
+      const x2 = Math.max(selectionStartPt.x, curr.x);
+      const y2 = Math.max(selectionStartPt.y, curr.y);
+      tempSelectionIndices = new Set();
+      points.forEach((pt, i) => {
+        const p = miniMap.latLngToContainerPoint([pt.lat, pt.lon]);
+        if (p.x >= x1 && p.x <= x2 && p.y >= y1 && p.y <= y2) tempSelectionIndices.add(i);
+      });
+      renderMarkers();
+    });
+  }
+}
+
+function onMiniMapMouseUp(e) {
+  if (!showImageNumbers || !selectionStartPt) return;
+  if (!miniMap) return;
+  const container = miniMap.getContainer();
+  if (!container) return;
+  e.preventDefault(); e.stopPropagation();
+  const rect = container.getBoundingClientRect();
+  const end = { x: e.clientX - rect.left, y: e.clientY - rect.top };
+  const x1 = Math.min(selectionStartPt.x, end.x);
+  const y1 = Math.min(selectionStartPt.y, end.y);
+  const x2 = Math.max(selectionStartPt.x, end.x);
+  const y2 = Math.max(selectionStartPt.y, end.y);
+  const insideIndices = [];
+  points.forEach((pt, i) => {
+    const p = miniMap.latLngToContainerPoint([pt.lat, pt.lon]);
+    if (p.x >= x1 && p.x <= x2 && p.y >= y1 && p.y <= y2) insideIndices.push(i);
+  });
+  if (insideIndices.length) {
+    insideIndices.forEach(i => {
+      if (selectedIndices.has(i)) selectedIndices.delete(i); else selectedIndices.add(i);
+    });
+  }
+  removeSelectionRect();
+  selectionStartPt = null;
+  tempSelectionIndices.clear();
+  if (miniMap.dragging) miniMap.dragging.enable();
+  renderMarkers();
+}
+
+function drawSelectionRect(start, end) {
+  if (!miniMap) return;
+  const container = miniMap.getContainer();
+  if (!container) return;
+  if (!selectionRectDiv) {
+    selectionRectDiv = document.createElement('div');
+    selectionRectDiv.style.cssText = 'position:absolute;border:2px dashed #1976d2;background:rgba(25,118,210,0.15);pointer-events:none;z-index:2000;';
+    container.appendChild(selectionRectDiv);
+  }
+  const x = Math.min(start.x, end.x);
+  const y = Math.min(start.y, end.y);
+  const w = Math.abs(end.x - start.x);
+  const h = Math.abs(end.y - start.y);
+  selectionRectDiv.style.left = x + 'px';
+  selectionRectDiv.style.top = y + 'px';
+  selectionRectDiv.style.width = w + 'px';
+  selectionRectDiv.style.height = h + 'px';
+}
+
+/* =========================
+  초기 로드/이벤트 바인딩
+========================= */
+$(function() {
+  try {
+    const stored = localStorage.getItem(NORTH_OFFSET_STORAGE_KEY);
+    if (stored !== null) {
+      const parsed = parseFloat(stored);
+      if (!Number.isNaN(parsed)) {
+        northOffset = parsed;
+        const inputEl = document.getElementById('northOffsetInput');
+        if (inputEl) inputEl.value = String(northOffset);
+      }
+    }
+    const storedPerImage = localStorage.getItem(PER_IMAGE_OFFSETS_STORAGE_KEY);
+    if (storedPerImage !== null) {
+      const parsed = JSON.parse(storedPerImage);
+      if (parsed && typeof parsed === 'object') perImageOffsets = parsed;
+    }
+  } catch (e) {}
+  
+  // 폴더 설정 로드
+  //loadFolderSettings().then(() => {
+    // console.log('초기 폴더 설정 로드 완료');
+  //});
+
+  // 서버에서 전달된 points 데이터가 있으면 즉시 사용 (로딩 지연 없음)
+  {% if points is defined and points|length > 0 %}
+  points = {{ points | tojson }};
+  console.log('서버에서 전달된 points 데이터 즉시 사용:', points.length, '개');
+  
+  // 즉시 초기화 (API 호출 없이)
+  let center = points.length ? [points[0].lat, points[0].lon] : [37.5665, 126.9780];
+  miniMap = L.map('miniMap', { center: center, zoom: 17, zoomControl: true, attributionControl: true });
+  L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', { maxZoom: 19 }).addTo(miniMap);
+  miniMap.zoomControl.setPosition('topleft');
+
+  pointsLayer = null;
+  lastFetchKey = "";
+  if (mapFetchAbort) mapFetchAbort.abort();
+  mapFetchAbort = null;
+  attachMapFetchHandlers();
+  
+  const leafletZoomControl = document.querySelector('.leaflet-control-zoom');
+  if (leafletZoomControl) {
+    leafletZoomControl.style.transform = 'scale(1.0)';
+  }
+
+  addReturnButtonControl();
+  // 우클릭 메뉴 제거됨
+
+  if (points.length) {
+    renderMarkers();
+    // 첫 번째 노드를 중심으로 적절히 확대된 상태로 설정
+    const firstPoint = points[0];
+    if (firstPoint) {
+      miniMap.setView([firstPoint.lat, firstPoint.lon], 17);
+    }
+    
+    let startIdx = 0;
+    {% if target_point and target_index is defined %}
+    window.targetNodeInfo = {
+      track_seg_point_id: '{{ track_seg_point_id }}',
+      target_index: {{ target_index }},
+      target_point: {{ target_point | tojson }}
+    };
+    const id = (window.targetNodeInfo.track_seg_point_id || '').toString().trim();
+    const found = points.findIndex(p => (p.track_seg_point_id || '').toString().trim() === id);
+    if (found >= 0) startIdx = found;
+    {% else %}
+    const firstImageIndex = points.findIndex(p => p.image && p.image.trim() !== '');
+    if (firstImageIndex >= 0) {
+      startIdx = firstImageIndex;
+    }
+    {% endif %}
+    // 이미지 프리로딩과 동시에 즉시 표시
+    if (points[startIdx] && points[startIdx].image) {
+      const imgUrl = points[startIdx].image;
+      const preloadImg = new Image();
+      preloadImg.src = imgUrl;
+    }
+    const initId = getInitialTargetNodeId();
+    if (initId) {
+      window._hasPendingTargetNode = true;
+      gotoNodeByInfo({ track_seg_point_id: initId });
+    } else {
+      showImage(startIdx);
+    }
+    setTimeout(updateNorthOffsetInputStyle, 100);
+  }
+  {% else %}
+  // 서버에서 데이터가 없으면 /points API 호출
+  $.getJSON('/pano/points', data => {
+    points = (data || []);
+    let center = points.length ? [points[0].lat, points[0].lon] : [37.5665, 126.9780];
+    miniMap = L.map('miniMap', { center: center, zoom: 17, zoomControl: true, attributionControl: true });
+    L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', { maxZoom: 19 }).addTo(miniMap);
+    miniMap.zoomControl.setPosition('topleft');
+
+    // ✅ Viewport 기반 포인트 fetch 핸들러 연결 (이 케이스에서 빠져있음)
+    pointsLayer = null;
+    lastFetchKey = "";
+    if (mapFetchAbort) mapFetchAbort.abort();
+    mapFetchAbort = null;
+    attachMapFetchHandlers();
+    
+    // Leaflet 확대/축소 컨트롤 크기 조정 (최초 로드 시에도 적용)
+    const leafletZoomControl = document.querySelector('.leaflet-control-zoom');
+    if (leafletZoomControl) {
+      leafletZoomControl.style.transform = 'scale(1.0)';
+    }
+
+    addReturnButtonControl();
+
+    // 우클릭 메뉴 제거됨
+
+    if (points.length) {
+      renderMarkers();
+      // 첫 번째 노드를 중심으로 적절히 확대된 상태로 설정
+      const firstPoint = points[0];
+      if (firstPoint) {
+        miniMap.setView([firstPoint.lat, firstPoint.lon], 17);
+      }
+      let startIdx = 0;
+      if (window.targetNodeInfo && window.targetNodeInfo.track_seg_point_id) {
+        const id = (window.targetNodeInfo.track_seg_point_id || '').toString().trim();
+        const found = points.findIndex(p => (p.track_seg_point_id || '').toString().trim() === id);
+        if (found >= 0) startIdx = found;
+      }
+      const initId = getInitialTargetNodeId();
+      if (initId) {
+        window._hasPendingTargetNode = true;
+        gotoNodeByInfo({ track_seg_point_id: initId });
+      } else {
+        showImage(startIdx);
+      }
+      setTimeout(updateNorthOffsetInputStyle, 100);
+    } else {
+      console.log('초기 데이터 없음. 메뉴에서 데이터셋을 로드하세요.');
+    }
+  });
+  {% endif %}
+});
+
+// 키보드 탐색
+document.addEventListener('keydown', function(e) {
+  if (e.ctrlKey || e.altKey || e.metaKey || e.repeat) return;
+  if (Object.keys(keysPressed).length > 0) return;
+  const code = e.code;
+  if (!(code in codeToDeg) || currentHeldKey === code) return;
+  e.preventDefault();
+  currentHeldKey = code;
+  keysPressed[code] = true;
+  const relDeg = codeToDeg[code];
+  const tryMove = () => {
+    if (!marzipanoScenes[currentIndex]) return;
+    const view = marzipanoScenes[currentIndex].view;
+    const centerYawRad = view.yaw();
+    const nextIdx = findClosestNodeAtDirection(currentIndex, points, 18, centerYawRad, relDeg);
+    if (nextIdx !== null) showImage(nextIdx);
+  };
+  tryMove();
+  keyHoldInterval = setInterval(tryMove, 300);
+});
+document.addEventListener('keyup', function(e) {
+  const code = e.code;
+  delete keysPressed[code];
+  if (keyHoldInterval) clearInterval(keyHoldInterval);
+  keyHoldInterval = null;
+  currentHeldKey = null;
+});
+
+// localStorage 초기화 함수 - CSV 원본 angle 값으로 복원
+async function clearLocalStorageOffsets() {
+  try {
+    // localStorage 초기화
+    localStorage.removeItem(PER_IMAGE_OFFSETS_STORAGE_KEY);
+    perImageOffsets = {};
+    // console.log('localStorage 오프셋이 초기화되었습니다.');
+    
+    // CSV 파일의 angle_add 컬럼을 모두 0으로 초기화
+    if (points.length > 0) {
+      const point = points[0];
+      if (point && point.dataset_name) {
+        const response = await fetch('/api/clear-angle-add', {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+          },
+          body: JSON.stringify({
+            dataset_name: point.dataset_name
+          })
+        });
+        
+        if (response.ok) {
+          const result = await response.json();
+          // console.log(`CSV 초기화 성공: ${result.message}`);
+          
+          // points 배열의 final_angle도 원본 angle 값으로 복원
+          points.forEach((pt, idx) => {
+            if (pt.dataset_name === point.dataset_name) {
+              pt.csv_angle_add = 0;  // 숫자 0으로 설정
+              pt.final_angle = parseFloat(pt.csv_angle);  // 원본 angle 값
+              // console.log(`이미지 ${idx} 초기화: csv_angle_add=${pt.csv_angle_add}, final_angle=${pt.final_angle}°`);
+            }
+          });
+          
+          alert('CSV 파일과 localStorage가 모두 초기화되었습니다. 부채꼴이 원본 각도로 복원됩니다.');
+          
+          // 현재 이미지의 부채꼴 업데이트
+          if (marzipanoScenes[currentIndex]) {
+            const view = marzipanoScenes[currentIndex].view;
+            const yaw = view.yaw();
+            highlight(currentIndex, yaw * 180 / Math.PI);
+          }
+        } else {
+          console.error('CSV 초기화 실패:', response.statusText);
+          alert('localStorage는 초기화되었지만 CSV 초기화에 실패했습니다.');
+        }
+      }
+    }
+  } catch (e) {
+    console.error('초기화 실패:', e);
+    alert('초기화 중 오류가 발생했습니다.');
+  }
+}
+
+async function loadTrackLineFromShapefile(datasetName) {
+  // Track Shapefile에서 라인 데이터 로드
+  if (!datasetName) {
+    console.warn('[Track 라인] 데이터셋 이름이 없습니다.');
+    return;
+  }
+  
+  if (!miniMap) {
+    console.warn('[Track 라인] 미니맵이 초기화되지 않았습니다.');
+    return;
+  }
+  
+  // 중복 요청 방지
+  if (window._trackLineLoading && window._trackLineLoading === datasetName) {
+    console.log(`[Track 라인] 이미 로딩 중입니다: ${datasetName}`);
+    return;
+  }
+  
+  window._trackLineLoading = datasetName;
+  
+  try {
+    console.log(`[Track 라인] 로드 시도: ${datasetName}`);
+    
+    // 약간의 지연을 두어 다른 초기화 작업이 완료되도록 함
+    await new Promise(resolve => setTimeout(resolve, 100));
+    
+    // miniMap이 여전히 유효한지 다시 확인
+    if (!miniMap || !miniMap._container) {
+      console.warn('[Track 라인] 미니맵이 더 이상 유효하지 않습니다.');
+      window._trackLineLoading = null;
+      return;
+    }
+    
+    const response = await fetch(`/api/track-line/${encodeURIComponent(datasetName)}`, {
+      method: 'GET',
+      headers: {
+        'Accept': 'application/json',
+        'Cache-Control': 'no-cache'
+      },
+      cache: 'no-cache'
+    });
+    
+    console.log(`[Track 라인] API 응답 상태: ${response.status}`);
+    
+    if (!response.ok) {
+      throw new Error(`HTTP ${response.status}: ${response.statusText}`);
+    }
+    
+    const data = await response.json();
+    console.log('[Track 라인] API 응답 데이터:', data);
+    console.log('[Track 라인] 응답 상세:', {
+      success: data.success,
+      linesCount: data.lines ? data.lines.length : 0,
+      count: data.count,
+      error: data.error,
+      warning: data.warning,
+      datasetName: data.dataset_name
+    });
+    
+    // 로딩 플래그 해제
+    window._trackLineLoading = null;
+    
+    if (data.error) {
+      console.warn(`[Track 라인] 오류: ${data.error}`);
+      if (data.warning) {
+        console.warn(`[Track 라인] 경고: ${data.warning}`);
+      }
+      return;
+    }
+    
+    if (data.success && data.lines && data.lines.length > 0) {
+      console.log(`[Track 라인] ✅ ${data.lines.length}개 라인을 찾았습니다. 미니맵에 추가 시작...`);
+      // miniMap이 여전히 유효한지 확인
+      if (!miniMap || !miniMap._container) {
+        console.warn('[Track 라인] 미니맵이 더 이상 유효하지 않습니다.');
+        return;
+      }
+      
+      // 기존 track polyline 제거
+      if (window.trackPolyline && miniMap) {
+        try {
+          miniMap.removeLayer(window.trackPolyline);
+        } catch (e) {
+          console.warn('[Track 라인] 기존 polyline 제거 실패:', e);
+        }
+        window.trackPolyline = null;
+      }
+      
+      // 각 라인을 미니맵에 추가
+      data.lines.forEach((line, index) => {
+        if (!line.coordinates || !Array.isArray(line.coordinates) || line.coordinates.length === 0) {
+          console.warn(`[Track 라인] 라인 ${index}의 좌표가 유효하지 않습니다.`);
+          return;
+        }
+        
+        try {
+          // miniMap이 여전히 유효한지 다시 확인
+          if (!miniMap || !miniMap._container) {
+            console.warn('[Track 라인] 미니맵이 더 이상 유효하지 않습니다.');
+            return;
+          }
+          
+          const polyline = L.polyline(line.coordinates, {
+            color: '#1976d2',
+            weight: 6,
+            opacity: 0.7,  // ✅ 보이도록 설정 (0.7 = 70% 불투명도)
+            fillOpacity: 0.3,
+            interactive: true,  // 클릭 가능하도록
+            pane: 'overlayPane'  // 다른 레이어 위에 표시
+          }).addTo(miniMap);
+          
+          // z-index를 높여서 다른 레이어 위에 표시
+          if (polyline._path) {
+            polyline._path.style.zIndex = '1000';
+          }
+          
+          // polyline이 실제로 추가되었는지 확인
+          const isAdded = miniMap.hasLayer(polyline);
+          console.log(`[Track 라인] 라인 ${index} 추가 시도:`, {
+            coordinatesCount: line.coordinates.length,
+            firstCoord: line.coordinates[0],
+            lastCoord: line.coordinates[line.coordinates.length - 1],
+            polylineCreated: !!polyline,
+            polylineAddedToMap: isAdded,
+            opacity: polyline.options.opacity,
+            color: polyline.options.color,
+            weight: polyline.options.weight
+          });
+          
+          if (!isAdded) {
+            console.error(`[Track 라인] ⚠️ 라인 ${index}가 미니맵에 추가되지 않았습니다!`);
+          }
+          
+          // 첫 번째 라인을 메인 트랙으로 설정
+          if (index === 0) {
+            window.trackPolyline = polyline;
+            polyline.bringToFront();
+            
+            // z-index를 최상위로 설정
+            if (polyline._path) {
+              polyline._path.style.zIndex = '2000';
+            }
+            
+            console.log('[Track 라인] 메인 트랙 polyline 설정 완료', {
+              polyline: !!polyline,
+              onMap: miniMap.hasLayer(polyline),
+              zIndex: polyline._path ? polyline._path.style.zIndex : 'N/A'
+            });
+            
+            // Track 선분 클릭 이벤트 추가
+            polyline.on('click', function(e) {
+              const clickedLatLng = e.latlng;
+              let closestIndex = 0;
+              let minDistance = Infinity;
+              
+              if (points && points.length > 0) {
+                points.forEach((pt, idx) => {
+                  const distance = clickedLatLng.distanceTo([pt.lat, pt.lon]);
+                  if (distance < minDistance) {
+                    minDistance = distance;
+                    closestIndex = idx;
+                  }
+                });
+                
+                showImage(closestIndex);
+              }
+            });
+          }
+        } catch (e) {
+          console.error(`[Track 라인] 라인 ${index} 추가 실패:`, e);
+        }
+      });
+      
+      console.log(`[Track 라인] ✅ 로드 완료: ${data.lines.length}개 라인이 미니맵에 추가되었습니다.`);
+      console.log(`[Track 라인] 미니맵 레이어 확인:`, {
+        trackPolylineExists: !!window.trackPolyline,
+        trackPolylineOnMap: window.trackPolyline ? miniMap.hasLayer(window.trackPolyline) : false,
+        miniMapLayers: miniMap._layers ? Object.keys(miniMap._layers).length : 0
+      });
+    } else {
+      if (data.count === 0) {
+        console.warn(`[Track 라인] ⚠️ 라인을 찾을 수 없습니다. (데이터셋: ${datasetName})`);
+        if (data.error) {
+          console.warn(`[Track 라인] 상세 오류: ${data.error}`);
+        }
+        if (data.warning) {
+          console.warn(`[Track 라인] 경고: ${data.warning}`);
+        }
+      } else {
+        console.warn(`[Track 라인] ⚠️ 성공했지만 라인이 없습니다. (데이터셋: ${datasetName}, count: ${data.count})`);
+      }
+    }
+  } catch (error) {
+    // 로딩 플래그 해제
+    window._trackLineLoading = null;
+    
+    if (error.name === 'AbortError') {
+      console.warn('[Track 라인] 요청이 중단되었습니다.');
+    } else {
+      console.error('[Track 라인] 로드 오류:', error);
+    }
+  }
+}
+
+// 마우스 휠 줌
+document.getElementById('viewerContainer').addEventListener('wheel', function(e) {
+  if (marzipanoScenes[currentIndex] && marzipanoScenes[currentIndex].view) {
+    e.preventDefault();
+    const view = marzipanoScenes[currentIndex].view;
+    const currentFov = view.fov();
+    const zoomFactor = e.deltaY > 0 ? 1.1 : 0.9;
+    let newFov = currentFov * zoomFactor;
+    const initialFov = marzipanoScenes[currentIndex].initialFov;
+    if (initialFov) newFov = Math.min(Math.max(newFov, 0.01), initialFov);
+    view.setFov(newFov);
+  }
+}, { passive: false });
+
+// 메뉴 핸들러
+document.addEventListener('DOMContentLoaded', function() {
+  // console.log('DOMContentLoaded 실행됨');
+  
+  // Marzipano 라이브러리 로드 확인 (약간의 지연을 두고 확인)
+  setTimeout(function() {
+    if (typeof Marzipano === 'undefined') {
+      console.error('Marzipano 라이브러리가 로드되지 않았습니다. 페이지를 새로고침해주세요.');
+      alert('Marzipano 라이브러리 로드 실패: 페이지를 새로고침해주세요.');
+      return;
+    }
+    
+    // Marzipano가 로드된 후 초기화
+    initializeApp();
+  }, 100);
+});
+
+function initializeApp() {
+  
+  const loadDatasetBtn = document.getElementById('loadDatasetBtn');
+  const setDataPathBtn = document.getElementById('setDataPathBtn');
+  const menuFileBtn = document.getElementById('menuFileBtn');
+  const menuOptionBtn = document.getElementById('menuOptionBtn');
+  const menuFileMenu = document.getElementById('menuFileMenu');
+  const menuOptionMenu = document.getElementById('menuOptionMenu');
+  
+  // console.log('loadDatasetBtn:', loadDatasetBtn);
+  // console.log('setDataPathBtn:', setDataPathBtn);
+  
+  // 메뉴 토글 기능
+  function toggleMenu(menuElement, otherMenuElement, buttonElement) {
+    // console.log('toggleMenu 호출됨:', {
+    //   menuElement: menuElement,
+    //   otherMenuElement: otherMenuElement,
+    //   buttonElement: buttonElement,
+    //   hasActive: menuElement.classList.contains('active')
+    // });
+    
+    if (menuElement.classList.contains('active')) {
+      // console.log('메뉴 닫기');
+      menuElement.classList.remove('active');
+    } else {
+      // console.log('메뉴 열기');
+      // 다른 메뉴 닫기
+      otherMenuElement.classList.remove('active');
+      // 메뉴 위치 설정
+      if (buttonElement) {
+        menuElement.style.left = buttonElement.offsetLeft + 'px';
+      }
+      // 현재 메뉴 열기
+      menuElement.classList.add('active');
+      // console.log('메뉴에 active 클래스 추가됨:', menuElement.classList.contains('active'));
+    }
+  }
+  
+  // 파일 메뉴 토글 (메뉴가 있을 때만)
+  if (menuFileBtn && menuFileMenu) {
+    // console.log('파일 메뉴 버튼 이벤트 등록됨');
+    menuFileBtn.addEventListener('click', function(e) {
+      // console.log('파일 메뉴 클릭됨');
+      e.stopPropagation(); // 이벤트 버블링 방지
+      toggleMenu(menuFileMenu, menuOptionMenu, menuFileBtn);
+    });
+  }
+  // hide_menu 모드에서는 메뉴 요소가 없으므로 조용히 무시
+  
+  // 옵션 메뉴 토글 (메뉴가 있을 때만)
+  if (menuOptionBtn && menuOptionMenu) {
+    // console.log('옵션 메뉴 버튼 이벤트 등록됨');
+    menuOptionBtn.addEventListener('click', function(e) {
+      // console.log('옵션 메뉴 클릭됨');
+      e.stopPropagation(); // 이벤트 버블링 방지
+      toggleMenu(menuOptionMenu, menuFileMenu, menuOptionBtn);
+    });
+  }
+  // hide_menu 모드에서는 메뉴 요소가 없으므로 조용히 무시
+  
+  // 메뉴 외부 클릭 시 모든 메뉴 닫기 (메뉴 클릭 이벤트와 충돌 방지)
+  document.addEventListener('click', function(e) {
+    // 메뉴 버튼이나 메뉴 항목을 클릭한 경우는 무시
+    if (e.target.closest('.menu-item') || e.target.closest('.dropdown-menu')) {
+      return;
+    }
+    
+    // 메뉴 외부 클릭 시 모든 메뉴 닫기
+    if (menuFileMenu) menuFileMenu.classList.remove('active');
+    if (menuOptionMenu) menuOptionMenu.classList.remove('active');
+  });
+  
+  if (loadDatasetBtn && menuFileMenu) {
+    loadDatasetBtn.addEventListener('click', function() {
+      // 메뉴 닫기
+      if (menuFileMenu) menuFileMenu.classList.remove('active');
+      showDatasetSelectionModal();
+    });
+    // console.log('데이터셋 로드 버튼 이벤트 등록됨');
+  }
+  
+  if (setDataPathBtn && menuFileMenu) {
+    setDataPathBtn.addEventListener('click', function() {
+      // 메뉴 닫기
+      if (menuFileMenu) menuFileMenu.classList.remove('active');
+      openFolderSettingsModal();
+    });
+    // console.log('데이터 경로 지정 버튼 이벤트 등록됨');
+  }
+  
+  // 폴더 설정 관련 이벤트 핸들러
+  document.getElementById('saveFolderSettingsBtn').addEventListener('click', saveFolderSettings);
+  document.getElementById('cancelFolderSettingsBtn').addEventListener('click', closeFolderSettingsModal);
+  document.getElementById('folderSettingsModal').addEventListener('click', function(e) {
+    if (e.target === this) closeFolderSettingsModal();
+  });
+
+  // 탐색기 버튼 이벤트 핸들러
+  document.getElementById('browseImgFolderBtn').addEventListener('click', () => openFolderBrowser('imgFolderInput'));
+  document.getElementById('browseTrackFolderBtn').addEventListener('click', () => openFolderBrowser('trackFolderInput'));
+  document.getElementById('browsePointFolderBtn').addEventListener('click', () => openFolderBrowser('pointFolderInput'));
+  document.getElementById('browseMatchFolderBtn').addEventListener('click', () => openFolderBrowser('matchFolderInput'));
+  const browseTileBtn = document.getElementById('browseTileFolderBtn');
+  if (browseTileBtn) {
+    browseTileBtn.addEventListener('click', () => openFolderBrowser('tileFolderInput'));
+  }
+
+  // 경로 타입 선택 모달 이벤트 핸들러
+  document.getElementById('selectGpxPathBtn').addEventListener('click', () => {
+    closePathTypeSelectionModal();
+    openIndividualPathModal('gpx');
+  });
+  document.getElementById('selectImgPathBtn').addEventListener('click', () => {
+    closePathTypeSelectionModal();
+    openIndividualPathModal('img');
+  });
+  document.getElementById('selectCsvPathBtn').addEventListener('click', () => {
+    closePathTypeSelectionModal();
+    openIndividualPathModal('csv');
+  });
+  document.getElementById('cancelPathTypeBtn').addEventListener('click', closePathTypeSelectionModal);
+  document.getElementById('pathTypeSelectionModal').addEventListener('click', function(e) {
+    if (e.target === this) closePathTypeSelectionModal();
+  });
+
+  // 개별 경로 설정 관련 이벤트 핸들러
+  document.getElementById('saveIndividualPathBtn').addEventListener('click', saveIndividualPath);
+  document.getElementById('cancelIndividualPathBtn').addEventListener('click', closeIndividualPathModal);
+  document.getElementById('browsePathBtn').addEventListener('click', openPathBrowser);
+  document.getElementById('individualPathModal').addEventListener('click', function(e) {
+    if (e.target === this) closeIndividualPathModal();
+  });
+
+  // 경로 입력 도우미 모달 이벤트 핸들러
+  document.getElementById('applyPathHelperBtn').addEventListener('click', applyPathFromHelper);
+  document.getElementById('cancelPathHelperBtn').addEventListener('click', closePathHelper);
+  document.getElementById('openFileDialogBtn').addEventListener('click', openFileDialog);
+  document.getElementById('copyFromRelativeBtn').addEventListener('click', copyFromRelativeToAbsolute);
+  document.getElementById('pathHelperModal').addEventListener('click', function(e) {
+    if (e.target === this) closePathHelper();
+  });
+
+  document.getElementById('loadSelectedDatasetBtn').addEventListener('click', async () => {
+    if (!selectedDatasetNames.size) {
+      alert('데이터셋을 하나 이상 선택해주세요.');
+      return;
+    }
+    
+    // 타일링 사용 여부 확인 팝업
+    const useTiles = confirm('타일링으로 로드하시겠습니까?\n\n확인: 타일링된 이미지 사용\n취소: 원본 이미지 사용');
+    
+    // loadDatasets 함수 사용 (일관성 유지)
+    const success = await loadDatasets(Array.from(selectedDatasetNames), useTiles);
+    if (success) {
+      document.getElementById('datasetSelectionModal').style.display = 'none';
+      alert(`로드 완료: ${Array.from(selectedDatasetNames).join(', ')} (총 ${points.length} 포인트)`);
+    }
+  });
+
+  document.getElementById('cancelDatasetBtn').addEventListener('click', () => {
+    document.getElementById('datasetSelectionModal').style.display = 'none';
+  });
+
+  // 컨텍스트 메뉴 제거됨
+
+  detectAvailableDatasets().then(datasets => {
+    if (datasets.length > 0) console.log(`${datasets.length}개의 데이터셋이 감지되었습니다.`);
+    else console.log('사용 가능한 데이터셋이 없습니다.');
+  });
+
+  // 특정 노드로 접근했을 때 해당 이미지 표시 (head 내 JSON 스크립트에서 읽기)
+  const tnScript = document.getElementById('targetNodeInfo');
+  let TARGET_NODE_INFO = null;
+  try {
+    if (tnScript && tnScript.textContent) {
+      TARGET_NODE_INFO = JSON.parse(tnScript.textContent);
+    }
+    // console.log(TARGET_NODE_INFO);
+  } catch (e) { console.warn('targetNodeInfo 파싱 실패:', e); }
+  if (TARGET_NODE_INFO) {
+    // console.log('특정 노드로 접근:', TARGET_NODE_INFO.track_seg_point_id);
+    window.targetNodeInfo = TARGET_NODE_INFO;
+
+    const showTargetNode = () => {
+      if (points.length > 0 && window.targetNodeInfo && window.targetNodeInfo.target_index < points.length) {
+        // console.log('타겟 노드 표시:', window.targetNodeInfo.target_index);
+        showImage(window.targetNodeInfo.target_index);
+
+        // 보안 요구로 주소창은 루트('/')만 보이도록 유지
+        // console.log('동적 노드 접근 중이지만 주소창은 루트로 유지');
+
+        const PREFIX = (window.SCRIPT_ROOT || '');
+        history.replaceState({ idx: window.targetNodeInfo.target_index, id: window.targetNodeInfo.track_seg_point_id }, '', PREFIX + '/');
+
+        document.title = '360° 파노라마 맵뷰어';
+
+        if (typeof miniMap !== 'undefined' && miniMap) {
+          setTimeout(() => {
+            highlight(window.targetNodeInfo.target_index, points[window.targetNodeInfo.target_index].angle || 0);
+          }, 500);
+        }
+
+        window.targetNodeInfo = null;
+      }
+    };
+
+    registerAfterDatasetLoaded(() => {
+      if (window.targetNodeInfo) setTimeout(showTargetNode, 500);
+    });
+  }
+
+  // 쿠키에서 target_node_id 읽어서 해당 노드로 이동
+  function getCookie(name) {
+    const value = `; ${document.cookie}`;
+    const parts = value.split(`; ${name}=`);
+    if (parts.length === 2) return parts.pop().split(';').shift();
+    return null;
+  }
+
+  const targetNodeIdFromCookie = getCookie('target_node_id');
+  if (targetNodeIdFromCookie) {
+    console.log('쿠키에서 target_node_id 발견:', targetNodeIdFromCookie);
+    
+    // 타겟 노드를 찾았는지 여부를 추적하는 플래그
+    window._hasPendingTargetNode = true;
+    
+    const moveToTargetNode = () => {
+      if (Array.isArray(points) && points.length > 0) {
+        console.log('포인트 데이터 로드됨, 총', points.length, '개');
+        console.log('첫 5개 포인트의 track_seg_point_id:', points.slice(0, 5).map(p => p.track_seg_point_id));
+        
+        const targetIndex = points.findIndex(p => 
+          String(p.track_seg_point_id || '').trim() === String(targetNodeIdFromCookie).trim()
+        );
+        
+        console.log('타겟 노드 검색 결과:', targetIndex);
+        
+        if (targetIndex >= 0) {
+          console.log('타겟 노드로 이동:', targetIndex, targetNodeIdFromCookie);
+          showImage(targetIndex);
+          
+          // 쿠키 삭제 (일회성 사용)
+          document.cookie = 'target_node_id=; expires=Thu, 01 Jan 1970 00:00:00 UTC; path=/;';
+          window._hasPendingTargetNode = false;
+        } else {
+          console.warn('타겟 노드를 찾지 못했습니다:', targetNodeIdFromCookie);
+          console.log('사용 가능한 노드 ID들 (첫 10개):', points.slice(0, 10).map(p => p.track_seg_point_id));
+          // 쿠키 삭제
+          document.cookie = 'target_node_id=; expires=Thu, 01 Jan 1970 00:00:00 UTC; path=/;';
+          // 타겟을 찾지 못했어도 플래그를 false로 설정하여 0번 표시 방지
+          window._hasPendingTargetNode = false;
+        }
+      } else {
+        console.log('포인트 데이터가 아직 로드되지 않았습니다.');
+      }
+    };
+
+    // 데이터셋이 로드된 후 실행
+    registerAfterDatasetLoaded(() => {
+      console.log('데이터셋 로드 완료, 타겟 노드로 이동 시도');
+      setTimeout(moveToTargetNode, 100);
+    });
+  } else {
+    console.log('쿠키에서 target_node_id를 찾지 못했습니다.');
+    console.log('현재 쿠키:', document.cookie);
+  }
+
+  // 데이터셋 로드 후 콜백 등록/실행 유틸
+  window.__afterDatasetLoadedCallbacks = Array.isArray(window.__afterDatasetLoadedCallbacks)
+    ? window.__afterDatasetLoadedCallbacks
+    : [];
+  function registerAfterDatasetLoaded(cb) {
+    if (typeof cb !== 'function') return;
+    if (!Array.isArray(window.__afterDatasetLoadedCallbacks)) {
+      window.__afterDatasetLoadedCallbacks = [];
+    }
+    window.__afterDatasetLoadedCallbacks.push(cb);
+  }
+  if (!window.__loadDatasetWrappedOnce) {
+    window.__loadDatasetWrappedOnce = true;
+    const __origLoadDataset = window.loadDataset;
+    window.loadDataset = async function(datasetNames) {
+      const result = await __origLoadDataset(datasetNames);
+      setTimeout(() => {
+        try {
+          (window.__afterDatasetLoadedCallbacks || []).forEach(cb => {
+            try { cb(); } catch (e) { console.error(e); }
+          });
+        } catch(e) { console.error(e); }
+      }, 0);
+      return result;
+    };
+  }
+
+  // postMessage 수신 (부모가 보냄)
+  window.addEventListener('message', (evt) => {
+    const data = evt.data || {};
+    if (data.type === 'GOTO_NODE' && data.payload) {
+      gotoNodeByInfo(data.payload);
+    }
+
+    if (data.type === 'CLOSE_VIEWER') {
+      try {
+        const info = window.__currentNodeInfo || null;
+        // 부모로 노선정보 응답 보내기
+        window.parent.postMessage({ type: 'RETURN_ID', payload: info}, '*');
+      } catch (err) {
+        console.error('return-id 요청 실패', err);
+        window.parent.postMessage({ type: 'RETURN_ID', payload: null}, '*');
+      }
+    }
+  });
+
+  // 각 노드의 URL 정보를 표시하는 함수
+  function displayNodeUrls() {
+    if (points.length === 0) return;
+    
+    // console.log('=== 각 노드의 개별 URL ===');
+    points.forEach((point, index) => {
+      const imageFilename = point.image_filename || '';
+      const trackSegPointId = (point.track_seg_point_id || '').toString().trim() || `node_${index}`;
+      const nodeUrl = `${location.origin}/${encodeURIComponent(trackSegPointId)}`;
+      // console.log(`노드 ${index}: ${nodeUrl} (${imageFilename})`);
+    });
+  }
+
+  // 데이터 로드 후 URL 정보 표시 등록
+  registerAfterDatasetLoaded(() => setTimeout(displayNodeUrls, 500));
+
+  // 노드 URL 목록 모달 표시 함수
+  function showNodeUrlsModal() {
+    if (points.length === 0) {
+      alert('로드된 데이터가 없습니다. 먼저 데이터셋을 로드해주세요.');
+      return;
+    }
+
+    const modal = document.getElementById('nodeUrlsModal');
+    const content = document.getElementById('nodeUrlsContent');
+    
+    let html = '<div style="font-family: monospace; font-size: 0.9em;">';
+    html += '<div style="margin-bottom: 10px; padding: 8px; background: #f5f5f5; border-radius: 4px; font-weight: bold;">각 노드의 개별 URL 목록</div>';
+    
+    points.forEach((point, index) => {
+      const imageFilename = point.image_filename || '';
+      const trackSegPointId = (point.track_seg_point_id || '').toString().trim() || `node_${index}`;
+      const nodeUrl = `${location.origin}/${encodeURIComponent(trackSegPointId)}`;
+      
+      html += `<div style="margin-bottom: 8px; padding: 8px; border: 1px solid #ddd; border-radius: 4px;">`;
+      html += `<div style="font-weight: bold; color: #1976d2;">노드 ${index}</div>`;
+      html += `<div style="margin: 4px 0; word-break: break-all;">`;
+      html += `<a href="${nodeUrl}" target="_blank" style="color: #1976d2; text-decoration: none;">${nodeUrl}</a>`;
+      html += `</div>`;
+      html += `<div style="font-size: 0.8em; color: #666;">파일: ${imageFilename || 'N/A'}</div>`;
+      html += `<div style="font-size: 0.8em; color: #666;">좌표: ${point.lat?.toFixed(6) || 'N/A'}, ${point.lon?.toFixed(6) || 'N/A'}</div>`;
+      html += `</div>`;
+    });
+    
+    html += '</div>';
+    content.innerHTML = html;
+    modal.style.display = 'flex';
+  }
+
+  // 노드 URL 모달 이벤트 핸들러
+  const showNodeUrlsBtnEl = document.getElementById('showNodeUrlsBtn');
+  if (showNodeUrlsBtnEl) showNodeUrlsBtnEl.addEventListener('click', showNodeUrlsModal);
+  document.getElementById('closeNodeUrlsModal').addEventListener('click', function() {
+    document.getElementById('nodeUrlsModal').style.display = 'none';
+  });
+
+  // 모달 외부 클릭 시 닫기
+  document.getElementById('nodeUrlsModal').addEventListener('click', function(e) {
+    if (e.target === this) {
+      this.style.display = 'none';
+    }
+  });
+}
+</script>
+</body>
+</html>
+
