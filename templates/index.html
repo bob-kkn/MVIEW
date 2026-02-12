@@ -657,6 +657,8 @@ const NORTH_OFFSET_STORAGE_KEY = 'northOffsetDeg';
 
 let didJumpToInitialTarget = false;
 let USE_VIEWPORT_POINTS = false;
+let activeTrackDatasetName = null;
+const trackLineCache = {};
 
 // 씬 업그레이드 순차 실행을 위한 큐
 const sceneUpgradeQueues = {};
@@ -952,39 +954,17 @@ function triggerTrackLineLoadFromPoints() {
 
 async function renderMarkers() {
   // Track 선분은 USE_VIEWPORT_POINTS와 관계없이 항상 로드
-  // 기존 track polyline 제거
-  if (window.trackPolyline && miniMap) {
-    try {
-      miniMap.removeLayer(window.trackPolyline);
-    } catch (e) {
-      console.warn('[renderMarkers] 기존 track polyline 제거 실패:', e);
-    }
-    window.trackPolyline = null;
-  }
-  
-  // Track 선분 그리기 (Shapefile만 지원)
   if (points.length > 1 && miniMap) {
-    // Shapefile 데이터셋: track.shp에서 라인 로드
     const datasetName = points[0].dataset_name;
-    console.log('[renderMarkers] Track 로드 시도:', { 
-      pointsLength: points.length, 
-      datasetName: datasetName,
-      miniMapExists: !!miniMap 
-    });
     if (datasetName) {
-      // 비동기로 로드하되 완료를 기다리지 않음 (논블로킹)
-      // 하지만 에러는 처리하도록 함
-      loadTrackLineFromShapefile(datasetName).catch(err => {
-        console.error('[renderMarkers] Track 라인 로드 실패:', err);
-      });
-    } else {
-      console.warn('[renderMarkers] dataset_name이 없습니다.');
+      const trackMissing = !window.trackPolyline || !miniMap.hasLayer(window.trackPolyline);
+      const datasetChanged = activeTrackDatasetName !== datasetName;
+      if (trackMissing || datasetChanged) {
+        loadTrackLineFromShapefile(datasetName).catch(err => {
+          console.error('[renderMarkers] Track 라인 로드 실패:', err);
+        });
+      }
     }
-  } else {
-    console.log('[renderMarkers] Track 로드 조건 불만족:', { 
-      pointsLength: points.length, 
-      miniMapExists: !!miniMap 
-    });
   }
   
   if (USE_VIEWPORT_POINTS) {
@@ -4187,6 +4167,61 @@ async function clearLocalStorageOffsets() {
   }
 }
 
+function drawTrackLinesOnMap(lines, datasetName) {
+  if (!miniMap || !Array.isArray(lines) || lines.length === 0) return;
+
+  if (window.trackPolyline && miniMap) {
+    try {
+      miniMap.removeLayer(window.trackPolyline);
+    } catch (e) {
+      console.warn('[Track 라인] 기존 polyline 제거 실패:', e);
+    }
+    window.trackPolyline = null;
+  }
+
+  lines.forEach((line, index) => {
+    if (!line.coordinates || !Array.isArray(line.coordinates) || line.coordinates.length === 0) return;
+
+    try {
+      const polyline = L.polyline(line.coordinates, {
+        color: '#1976d2',
+        weight: 6,
+        opacity: 0.7,
+        fillOpacity: 0.3,
+        interactive: true,
+        pane: 'overlayPane'
+      }).addTo(miniMap);
+
+      if (index === 0) {
+        window.trackPolyline = polyline;
+        polyline.bringToFront();
+
+        polyline.on('click', function(e) {
+          const clickedLatLng = e.latlng;
+          let closestIndex = 0;
+          let minDistance = Infinity;
+
+          if (points && points.length > 0) {
+            points.forEach((pt, idx) => {
+              const distance = clickedLatLng.distanceTo([pt.lat, pt.lon]);
+              if (distance < minDistance) {
+                minDistance = distance;
+                closestIndex = idx;
+              }
+            });
+
+            showImage(closestIndex);
+          }
+        });
+      }
+    } catch (e) {
+      console.error(`[Track 라인] 라인 ${index} 추가 실패:`, e);
+    }
+  });
+
+  activeTrackDatasetName = datasetName;
+}
+
 async function loadTrackLineFromShapefile(datasetName) {
   // Track Shapefile에서 라인 데이터 로드
   if (!datasetName) {
@@ -4199,12 +4234,17 @@ async function loadTrackLineFromShapefile(datasetName) {
     return;
   }
   
+  if (trackLineCache[datasetName]) {
+    drawTrackLinesOnMap(trackLineCache[datasetName], datasetName);
+    return;
+  }
+
   // 중복 요청 방지
   if (window._trackLineLoading && window._trackLineLoading === datasetName) {
     console.log(`[Track 라인] 이미 로딩 중입니다: ${datasetName}`);
     return;
   }
-  
+
   window._trackLineLoading = datasetName;
   
   try {
@@ -4223,10 +4263,8 @@ async function loadTrackLineFromShapefile(datasetName) {
     const response = await fetch(`/api/track-line/${encodeURIComponent(datasetName)}`, {
       method: 'GET',
       headers: {
-        'Accept': 'application/json',
-        'Cache-Control': 'no-cache'
-      },
-      cache: 'no-cache'
+        'Accept': 'application/json'
+      }
     });
     
     console.log(`[Track 라인] API 응답 상태: ${response.status}`);
@@ -4258,114 +4296,8 @@ async function loadTrackLineFromShapefile(datasetName) {
     }
     
     if (data.success && data.lines && data.lines.length > 0) {
-      console.log(`[Track 라인] ✅ ${data.lines.length}개 라인을 찾았습니다. 미니맵에 추가 시작...`);
-      // miniMap이 여전히 유효한지 확인
-      if (!miniMap || !miniMap._container) {
-        console.warn('[Track 라인] 미니맵이 더 이상 유효하지 않습니다.');
-        return;
-      }
-      
-      // 기존 track polyline 제거
-      if (window.trackPolyline && miniMap) {
-        try {
-          miniMap.removeLayer(window.trackPolyline);
-        } catch (e) {
-          console.warn('[Track 라인] 기존 polyline 제거 실패:', e);
-        }
-        window.trackPolyline = null;
-      }
-      
-      // 각 라인을 미니맵에 추가
-      data.lines.forEach((line, index) => {
-        if (!line.coordinates || !Array.isArray(line.coordinates) || line.coordinates.length === 0) {
-          console.warn(`[Track 라인] 라인 ${index}의 좌표가 유효하지 않습니다.`);
-          return;
-        }
-        
-        try {
-          // miniMap이 여전히 유효한지 다시 확인
-          if (!miniMap || !miniMap._container) {
-            console.warn('[Track 라인] 미니맵이 더 이상 유효하지 않습니다.');
-            return;
-          }
-          
-          const polyline = L.polyline(line.coordinates, {
-            color: '#1976d2',
-            weight: 6,
-            opacity: 0.7,  // ✅ 보이도록 설정 (0.7 = 70% 불투명도)
-            fillOpacity: 0.3,
-            interactive: true,  // 클릭 가능하도록
-            pane: 'overlayPane'  // 다른 레이어 위에 표시
-          }).addTo(miniMap);
-          
-          // z-index를 높여서 다른 레이어 위에 표시
-          if (polyline._path) {
-            polyline._path.style.zIndex = '1000';
-          }
-          
-          // polyline이 실제로 추가되었는지 확인
-          const isAdded = miniMap.hasLayer(polyline);
-          console.log(`[Track 라인] 라인 ${index} 추가 시도:`, {
-            coordinatesCount: line.coordinates.length,
-            firstCoord: line.coordinates[0],
-            lastCoord: line.coordinates[line.coordinates.length - 1],
-            polylineCreated: !!polyline,
-            polylineAddedToMap: isAdded,
-            opacity: polyline.options.opacity,
-            color: polyline.options.color,
-            weight: polyline.options.weight
-          });
-          
-          if (!isAdded) {
-            console.error(`[Track 라인] ⚠️ 라인 ${index}가 미니맵에 추가되지 않았습니다!`);
-          }
-          
-          // 첫 번째 라인을 메인 트랙으로 설정
-          if (index === 0) {
-            window.trackPolyline = polyline;
-            polyline.bringToFront();
-            
-            // z-index를 최상위로 설정
-            if (polyline._path) {
-              polyline._path.style.zIndex = '2000';
-            }
-            
-            console.log('[Track 라인] 메인 트랙 polyline 설정 완료', {
-              polyline: !!polyline,
-              onMap: miniMap.hasLayer(polyline),
-              zIndex: polyline._path ? polyline._path.style.zIndex : 'N/A'
-            });
-            
-            // Track 선분 클릭 이벤트 추가
-            polyline.on('click', function(e) {
-              const clickedLatLng = e.latlng;
-              let closestIndex = 0;
-              let minDistance = Infinity;
-              
-              if (points && points.length > 0) {
-                points.forEach((pt, idx) => {
-                  const distance = clickedLatLng.distanceTo([pt.lat, pt.lon]);
-                  if (distance < minDistance) {
-                    minDistance = distance;
-                    closestIndex = idx;
-                  }
-                });
-                
-                showImage(closestIndex);
-              }
-            });
-          }
-        } catch (e) {
-          console.error(`[Track 라인] 라인 ${index} 추가 실패:`, e);
-        }
-      });
-      
-      console.log(`[Track 라인] ✅ 로드 완료: ${data.lines.length}개 라인이 미니맵에 추가되었습니다.`);
-      console.log(`[Track 라인] 미니맵 레이어 확인:`, {
-        trackPolylineExists: !!window.trackPolyline,
-        trackPolylineOnMap: window.trackPolyline ? miniMap.hasLayer(window.trackPolyline) : false,
-        miniMapLayers: miniMap._layers ? Object.keys(miniMap._layers).length : 0
-      });
+      trackLineCache[datasetName] = data.lines;
+      drawTrackLinesOnMap(data.lines, datasetName);
     } else {
       if (data.count === 0) {
         console.warn(`[Track 라인] ⚠️ 라인을 찾을 수 없습니다. (데이터셋: ${datasetName})`);
