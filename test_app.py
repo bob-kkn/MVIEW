@@ -25,6 +25,7 @@ class AppPerformanceTests(unittest.TestCase):
         self.assertEqual(len(payload), 1)
         self.assertEqual(payload[0]["track_seg_point_id"], "a")
 
+<<<<<<< codex/identify-bottleneck-in-/points-and-/datasets-k9xomg
 
     def test_pano_points_defaults_to_limited_payload(self):
         points = [
@@ -66,6 +67,8 @@ class AppPerformanceTests(unittest.TestCase):
         payload = res.get_json()
         self.assertEqual(len(payload), 3)
 
+=======
+>>>>>>> main
     def test_get_shapefile_datasets_uses_cache_when_signature_same(self):
         point_file = "/tmp/waypoint/D1.shp"
 
