@@ -472,6 +472,7 @@ async function fetchByMapViewport() {
     // 초기 points 미주입 상태에서는 현재 viewport 데이터로 1회 부트스트랩
     if ((!Array.isArray(points) || points.length === 0) && Array.isArray(data) && data.length > 0) {
       points = data;
+      triggerTrackLineLoadFromPoints();
       const firstImageIndex = points.findIndex(p => p && p.image && String(p.image).trim() !== '');
       if (firstImageIndex >= 0) {
         showImage(firstImageIndex);
@@ -903,6 +904,16 @@ function makeDirectionFanSVG(angleDeg = 0, spanDeg = 80) {
     '</defs>' +
     '<path d="M' + cx + ',' + cy + ' L' + x1 + ',' + y1 + ' A' + r + ',' + r + ' 0 ' + laf + ' 1 ' + x2 + ',' + y2 + ' Z" fill="url(#fanGrad)" stroke="none"/>' +
     '</svg>';
+}
+
+function triggerTrackLineLoadFromPoints() {
+  if (!miniMap || !Array.isArray(points) || points.length < 2) return;
+  const datasetName = points[0]?.dataset_name;
+  if (!datasetName) return;
+
+  loadTrackLineFromShapefile(datasetName).catch(err => {
+    console.error('[triggerTrackLineLoadFromPoints] Track 라인 로드 실패:', err);
+  });
 }
 
 async function renderMarkers() {
@@ -4014,6 +4025,7 @@ $(function() {
       .then(res => res.json())
       .then(data => {
         points = Array.isArray(data) ? data : [];
+        triggerTrackLineLoadFromPoints();
         gotoNodeByInfo({ track_seg_point_id: initId });
       })
       .catch(err => {
@@ -4029,6 +4041,8 @@ $(function() {
           console.log('초기 데이터 없음. 메뉴에서 데이터셋을 로드하세요.');
           return;
         }
+
+        triggerTrackLineLoadFromPoints();
 
         const firstImageIndex = points.findIndex(p => p && p.image && String(p.image).trim() !== '');
         if (firstImageIndex >= 0) {
