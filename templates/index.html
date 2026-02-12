@@ -469,6 +469,15 @@ async function fetchByMapViewport() {
     const res = await fetch(url, { signal: mapFetchAbort.signal });
     const data = await res.json();
 
+    // 초기 points 미주입 상태에서는 현재 viewport 데이터로 1회 부트스트랩
+    if ((!Array.isArray(points) || points.length === 0) && Array.isArray(data) && data.length > 0) {
+      points = data;
+      const firstImageIndex = points.findIndex(p => p && p.image && String(p.image).trim() !== '');
+      if (firstImageIndex >= 0) {
+        showImage(firstImageIndex);
+      }
+    }
+
     // 렌더링
     renderFetchedPoints(data);
 
@@ -534,13 +543,15 @@ function renderFetchedPoints(data) {
         return;
       }
 
-      // 1) 같은 페이지에서 파노/뷰어만 이동(추천: 너 코드에 이미 있을 확률 높음)
-      if (typeof window.gotoNodeByInfo === "function") {
+      // 1) 같은 페이지에서 파노/뷰어 이동 가능하면 우선 시도
+      const hasLocalNode = Array.isArray(points)
+        && points.some(x => String(x?.track_seg_point_id ?? '').trim() === nodeId);
+      if (hasLocalNode && typeof window.gotoNodeByInfo === "function") {
         window.gotoNodeByInfo({ track_seg_point_id: nodeId });
         return;
       }
 
-      // 2) fallback: /pano/<id>로 페이지 이동
+      // 2) fallback: 서버 라우트로 이동해 대상 노드를 로드
       window.location.href = `/pano/${encodeURIComponent(nodeId)}`;
     });
 
@@ -3996,7 +4007,18 @@ $(function() {
   const initId = getInitialTargetNodeId();
   if (initId) {
     window._hasPendingTargetNode = true;
-    gotoNodeByInfo({ track_seg_point_id: initId });
+
+    // 초기 points 미주입 케이스에서 타겟 노드 딥링크가 오면,
+    // 한 번만 full points를 받아 기존 이동 로직(showImage/gotoNodeByInfo)을 유지한다.
+    fetch('/pano/points?full=1')
+      .then(res => res.json())
+      .then(data => {
+        points = Array.isArray(data) ? data : [];
+        gotoNodeByInfo({ track_seg_point_id: initId });
+      })
+      .catch(err => {
+        console.error('[init target] points preload 실패:', err);
+      });
   } else {
     console.log('초기 데이터 없음. 메뉴에서 데이터셋을 로드하세요.');
   }

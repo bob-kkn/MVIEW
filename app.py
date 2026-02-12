@@ -1093,30 +1093,7 @@ def index():
 def api_points():
     bbox = request.args.get("bbox", "").strip()
     limit = int(request.args.get("limit", "5000"))
-
-    if not bbox:
-        return jsonify([])
-
-    try:
-        west, south, east, north = map(float, bbox.split(","))
-    except Exception:
-        return jsonify([])
-
-    points_by_lat, point_lats = _get_active_points_by_lat_snapshot()
-    if not points_by_lat or not point_lats:
-        return jsonify([])
-
-    start_idx = bisect_left(point_lats, south)
-    end_idx = bisect_right(point_lats, north)
-
-    out = []
-    for _lat, lon, p in points_by_lat[start_idx:end_idx]:
-        if west <= lon <= east:
-            out.append(p)
-            if len(out) >= limit:
-                break
-
-    return jsonify(out)
+    return jsonify(_query_active_points_in_bbox(bbox, limit))
 
 
 @app.route("/pano/admin")
