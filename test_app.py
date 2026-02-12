@@ -27,6 +27,21 @@ class AppPerformanceTests(unittest.TestCase):
 
 
 
+
+    def test_api_active_bootstrap_returns_first_image_point(self):
+        points = [
+            {"lat": 37.1, "lon": 127.1, "track_seg_point_id": "a", "image": ""},
+            {"lat": 37.2, "lon": 127.2, "track_seg_point_id": "b", "image": "/b.jpg"},
+        ]
+        m._set_active(points, ["D1"], use_tiles=True)
+
+        res = self.client.get("/api/active-bootstrap")
+        self.assertEqual(res.status_code, 200)
+        payload = res.get_json()
+        self.assertTrue(payload["success"])
+        self.assertTrue(payload["has_points"])
+        self.assertEqual(payload["point"]["track_seg_point_id"], "b")
+
     def test_api_point_returns_single_point(self):
         points = [
             {"lat": 37.1, "lon": 127.1, "track_seg_point_id": "a", "image": "/x.jpg"},

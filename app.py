@@ -1098,6 +1098,25 @@ def api_points():
 
 
 
+
+
+def _find_first_image_point(points: List[dict]) -> Optional[dict]:
+    for point in points or []:
+        image_path = point.get("image")
+        if image_path and str(image_path).strip():
+            return point
+    return None
+
+
+@app.get("/api/active-bootstrap")
+def api_active_bootstrap():
+    points_snapshot = _get_active_points_snapshot()
+    first_point = _find_first_image_point(points_snapshot)
+    if not first_point:
+        return jsonify({"success": True, "has_points": False, "point": None})
+
+    return jsonify({"success": True, "has_points": True, "point": first_point})
+
 @app.get("/api/point/<track_seg_point_id>")
 def api_point_by_id(track_seg_point_id):
     track_seg_point_id = urllib.parse.unquote(str(track_seg_point_id)).strip()

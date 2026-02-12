@@ -4042,8 +4042,30 @@ $(function() {
         }
       });
   } else {
-    // 루트(/) 진입 시에는 viewport 기반으로 필요한 범위만 점진적으로 로드
-    console.log('초기 데이터 없음. 메뉴에서 데이터셋을 로드하세요.');
+    // 루트(/) 진입 시: active 상태에서 첫 표시용 point 1건만 받아 초기 화면을 구성
+    fetch('/api/active-bootstrap')
+      .then(res => res.json())
+      .then(data => {
+        if (!data || !data.success || !data.has_points || !data.point) {
+          console.log('초기 데이터 없음. 메뉴에서 데이터셋을 로드하세요.');
+          return;
+        }
+
+        points = [data.point];
+        triggerTrackLineLoadFromPoints();
+
+        const lat = Number(data.point.lat);
+        const lon = Number(data.point.lon);
+        if (!Number.isNaN(lat) && !Number.isNaN(lon)) {
+          miniMap.setView([lat, lon], 17);
+        }
+
+        showImage(0);
+        scheduleFetchByMap(0);
+      })
+      .catch(err => {
+        console.error('[root init] bootstrap 실패:', err);
+      });
   }
   {% endif %}
 });
