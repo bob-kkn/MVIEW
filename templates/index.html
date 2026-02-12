@@ -471,7 +471,7 @@ async function fetchByMapViewport() {
 
     // 초기 points 미주입 상태에서는 현재 viewport 데이터로 1회 부트스트랩
     if ((!Array.isArray(points) || points.length === 0) && Array.isArray(data) && data.length > 0) {
-      points = data;
+      points = mergeViewportPoints([], data);
       triggerTrackLineLoadFromPoints();
       const firstImageIndex = points.findIndex(p => p && p.image && String(p.image).trim() !== '');
       if (firstImageIndex >= 0) {
@@ -501,6 +501,34 @@ async function fetchByMapViewport() {
   }
 }
 
+function mergeViewportPoints(existingPoints, incomingPoints) {
+  const base = Array.isArray(existingPoints) ? existingPoints.slice() : [];
+  const incoming = Array.isArray(incomingPoints) ? incomingPoints : [];
+  const idToIndex = new Map();
+
+  base.forEach((pt, idx) => {
+    const id = String(pt?.track_seg_point_id ?? '').trim();
+    if (id) idToIndex.set(id, idx);
+  });
+
+  for (const pt of incoming) {
+    const id = String(pt?.track_seg_point_id ?? '').trim();
+    if (id && idToIndex.has(id)) {
+      base[idToIndex.get(id)] = pt;
+    } else {
+      if (id) idToIndex.set(id, base.length);
+      base.push(pt);
+    }
+  }
+
+  const hasFrameIndex = base.some(pt => Number.isFinite(Number(pt?.frame_index)));
+  if (hasFrameIndex) {
+    base.sort((a, b) => Number(a?.frame_index ?? Number.MAX_SAFE_INTEGER) - Number(b?.frame_index ?? Number.MAX_SAFE_INTEGER));
+  }
+
+  return base;
+}
+
 async function syncNavigationPointsFromViewport(data) {
   if (!Array.isArray(data) || data.length < 2) return;
   if (!Array.isArray(points) || points.length === 0) return;
@@ -511,13 +539,13 @@ async function syncNavigationPointsFromViewport(data) {
     : '';
   if (!currentNodeId) return;
 
-  const nextIndex = data.findIndex(p => String(p?.track_seg_point_id ?? '').trim() === currentNodeId);
+  const merged = mergeViewportPoints(points, data);
+  if (!Array.isArray(merged) || merged.length === 0) return;
+
+  const nextIndex = merged.findIndex(p => String(p?.track_seg_point_id ?? '').trim() === currentNodeId);
   if (nextIndex < 0) return;
 
-  // 현재 보유 포인트가 너무 적을 때만 viewport 데이터로 확장
-  if (points.length >= 2 && data.length <= points.length) return;
-
-  points = data;
+  points = merged;
 
   if (nextIndex !== currentIndex) {
     await showImage(nextIndex);
