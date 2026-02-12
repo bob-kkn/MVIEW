@@ -482,6 +482,9 @@ async function fetchByMapViewport() {
     // 렌더링
     renderFetchedPoints(data);
 
+    // 뷰포트 응답을 활용해 내비게이션용 points를 점진적으로 확장
+    await syncNavigationPointsFromViewport(data);
+
     // ✅ 최초 1회: initialTargetNodeId가 있으면 해당 노드로 이동/강조
     if (!didJumpToInitialTarget) {
       const initId = getInitialTargetNodeId(); // 너에게 준 헬퍼
@@ -495,6 +498,37 @@ async function fetchByMapViewport() {
   } catch (e) {
     if (e.name === "AbortError") return; // 정상
     console.error("[api_points] fetch 실패:", e);
+  }
+}
+
+async function syncNavigationPointsFromViewport(data) {
+  if (!Array.isArray(data) || data.length < 2) return;
+  if (!Array.isArray(points) || points.length === 0) return;
+
+  const current = points[currentIndex];
+  const currentNodeId = current && current.track_seg_point_id != null
+    ? String(current.track_seg_point_id).trim()
+    : '';
+  if (!currentNodeId) return;
+
+  const nextIndex = data.findIndex(p => String(p?.track_seg_point_id ?? '').trim() === currentNodeId);
+  if (nextIndex < 0) return;
+
+  // 현재 보유 포인트가 너무 적을 때만 viewport 데이터로 확장
+  if (points.length >= 2 && data.length <= points.length) return;
+
+  points = data;
+
+  if (nextIndex !== currentIndex) {
+    await showImage(nextIndex);
+    return;
+  }
+
+  if (marzipanoScenes[currentIndex] && marzipanoScenes[currentIndex].view) {
+    const view = marzipanoScenes[currentIndex].view;
+    renderRelativeNavArrows(currentIndex, view);
+    const yaw = view.yaw();
+    highlight(currentIndex, yaw * 180 / Math.PI);
   }
 }
 
