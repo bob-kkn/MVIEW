@@ -2952,19 +2952,21 @@ async function showImage(idx) {
     return;
   }
   
-  if (!points[idx] || !points[idx].image) {
-    console.warn('GOTO_NODE: 대상 노드에 이미지가 없습니다:', points[idx].track_seg_point_id);
+  const targetPoint = points[idx];
+  if (!targetPoint || !targetPoint.image) {
+    const missingNodeId = String(targetPoint?.track_seg_point_id ?? '').trim() || `node_${idx}`;
+    console.warn('GOTO_NODE: 대상 노드에 이미지가 없습니다:', missingNodeId);
 
     // 부모 창에 노드를 찾지 못했다는 메시지 전송
     try {
       window.parent?.postMessage(
-        { type: 'NODE_NOT_FOUND', payload: { track_seg_point_id: points[idx].track_seg_point_id } },
+        { type: 'NODE_NOT_FOUND', payload: { track_seg_point_id: missingNodeId } },
         '*'
       );
     } catch (err) {
       console.error('NODE_NOT_FOUND 메시지 전송 실패:', err);
     }
-    return;
+    return false;
   }
   let prevYaw = 0, prevPitch = 0;
   const hadPrevView = !!marzipanoScenes[currentIndex];
@@ -2987,12 +2989,12 @@ async function showImage(idx) {
   
   if (!sceneCreated) {
     console.error(`[타일 로드] 씬 생성 실패: 포인트 ${idx}`);
-    return;
+    return false;
   }
   
   if (!marzipanoScenes[idx] || !marzipanoScenes[idx].scene) {
     console.error(`[타일 로드] 씬이 생성되지 않음: 포인트 ${idx}`);
-    return;
+    return false;
   }
 
   // 씬 전환을 빠르게 처리 (속도 개선)
@@ -3109,6 +3111,8 @@ async function showImage(idx) {
     // 씬 전환 완료 후 다음/이전 씬 미리 생성 (성능 개선)
     preloadScenes(idx);
   });
+
+  return true;
 }
 
 // 뒤로/앞으로 탐색 처리
@@ -3127,13 +3131,51 @@ window.addEventListener('popstate', function(e) {
   }
 });
 
-function gotoNodeByInfo(info) {
+function resolveTrackSegPointId(info) {
+  if (info == null) return '';
+  if (typeof info === 'string' || typeof info === 'number') return String(info).trim();
+
+  return String(
+    info.track_seg_point_id
+      ?? info.trackSegPointId
+      ?? info.node_id
+      ?? info.target_node_id
+      ?? info.id
+      ?? ''
+  ).trim();
+}
+
+async function findOrLoadNodeIndexById(trackSegPointId) {
+  const id = String(trackSegPointId ?? '').trim();
+  if (!id) return -1;
+
+  let idx = points.findIndex(p => String(p?.track_seg_point_id ?? '').trim() === id);
+  if (idx >= 0) return idx;
+
+  try {
+    const res = await fetch(`/api/point/${encodeURIComponent(id)}`);
+    if (!res.ok) return -1;
+
+    const data = await res.json();
+    const point = data && data.success ? data.point : null;
+    if (!point) return -1;
+
+    points = mergeViewportPoints(Array.isArray(points) ? points : [], [point]);
+    idx = points.findIndex(p => String(p?.track_seg_point_id ?? '').trim() === id);
+    return idx;
+  } catch (err) {
+    console.error('GOTO_NODE: 대상 노드 조회 실패:', err);
+    return -1;
+  }
+}
+
+async function gotoNodeByInfo(info) {
   if (!info) return;
 
-  const doMove = () => {
+  const doMove = async () => {
     // track_seg_point_id로 idx 찾기
-    const id = String(info.track_seg_point_id ?? '').trim();
-    let idx = points.findIndex(p => String(p.track_seg_point_id ?? '').trim() === id);
+    const id = resolveTrackSegPointId(info);
+    let idx = await findOrLoadNodeIndexById(id);
 
     if (idx < 0 || idx >= points.length) {
       console.warn('GOTO_NODE: 대상 노드를 찾지 못했습니다:', info);
@@ -3152,7 +3194,8 @@ function gotoNodeByInfo(info) {
     }
 
     // 실제 이동
-    showImage(idx);
+    const moveSucceeded = await showImage(idx);
+    if (!moveSucceeded) return;
 
     const nodeId = String(points[idx]?.track_seg_point_id ?? `node_${idx}`);
     requestAnimationFrame(() => {
@@ -3189,9 +3232,9 @@ function gotoNodeByInfo(info) {
 
   // 데이터셋 아직이면 로드 완료 후 실행
   if (!Array.isArray(points) || points.length === 0) {
-    registerAfterDatasetLoaded(doMove);
+    registerAfterDatasetLoaded(() => { void doMove(); });
   } else {
-    doMove();
+    await doMove();
   }
 }
 
@@ -4761,4 +4804,3 @@ function initializeApp() {
 </script>
 </body>
 </html>
-
