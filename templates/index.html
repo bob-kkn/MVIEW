@@ -3145,13 +3145,37 @@ function resolveTrackSegPointId(info) {
   ).trim();
 }
 
+async function findOrLoadNodeIndexById(trackSegPointId) {
+  const id = String(trackSegPointId ?? '').trim();
+  if (!id) return -1;
+
+  let idx = points.findIndex(p => String(p?.track_seg_point_id ?? '').trim() === id);
+  if (idx >= 0) return idx;
+
+  try {
+    const res = await fetch(`/api/point/${encodeURIComponent(id)}`);
+    if (!res.ok) return -1;
+
+    const data = await res.json();
+    const point = data && data.success ? data.point : null;
+    if (!point) return -1;
+
+    points = mergeViewportPoints(Array.isArray(points) ? points : [], [point]);
+    idx = points.findIndex(p => String(p?.track_seg_point_id ?? '').trim() === id);
+    return idx;
+  } catch (err) {
+    console.error('GOTO_NODE: 대상 노드 조회 실패:', err);
+    return -1;
+  }
+}
+
 async function gotoNodeByInfo(info) {
   if (!info) return;
 
   const doMove = async () => {
     // track_seg_point_id로 idx 찾기
     const id = resolveTrackSegPointId(info);
-    let idx = points.findIndex(p => String(p.track_seg_point_id ?? '').trim() === id);
+    let idx = await findOrLoadNodeIndexById(id);
 
     if (idx < 0 || idx >= points.length) {
       console.warn('GOTO_NODE: 대상 노드를 찾지 못했습니다:', info);
